@@ -184,6 +184,21 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     }
   };
 
+  const handleDeleteProductPermanently = async (id: string, name: string) => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    const confirmVal = window.prompt(`Supprimer définitivement "${name}" ?\nTous les tarifs et photos associés seront effacés.\n\nTapez SUPPRIMER pour confirmer :`);
+    if (confirmVal !== 'SUPPRIMER') return;
+
+    try {
+      await catalogService.deleteProductPermanently(id);
+      setSuccessMsg(`"${name}" supprimé définitivement.`);
+      loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erreur lors de la suppression.');
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       
@@ -518,21 +533,29 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                       {p.category?.name} • Dernière modif: {formatDateFr(p.updated_at)}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => onSelectProduct(p)}
-                      className="btn-secondary text-[11px] py-1.5 px-3"
-                    >
-                      Voir la fiche
-                    </button>
-                    <button
-                      onClick={() => handleRestoreProduct(p.id)}
-                      className="btn-primary text-[11px] py-1.5 px-3 gap-1 bg-emerald-600 hover:bg-emerald-700"
-                    >
-                      <RotateCcw className="w-3.5 h-3.5" />
-                      Restaurer
-                    </button>
-                  </div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => onSelectProduct(p)}
+                        className="btn-secondary text-[11px] py-1.5 px-3"
+                      >
+                        Voir la fiche
+                      </button>
+                      <button
+                        onClick={() => handleRestoreProduct(p.id)}
+                        className="btn-primary text-[11px] py-1.5 px-3 gap-1 bg-emerald-600 hover:bg-emerald-700"
+                        title="Restaurer dans le catalogue actif"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        Restaurer
+                      </button>
+                      <button
+                        onClick={() => handleDeleteProductPermanently(p.id, p.name)}
+                        className="p-1.5 text-slate-400 hover:text-rose-600 rounded"
+                        title="Supprimer définitivement cet article"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                 </div>
               ))}
             </div>

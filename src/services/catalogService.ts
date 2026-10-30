@@ -535,6 +535,20 @@ export const catalogService = {
     }
   },
 
+  // Supprimer définitivement un produit
+  async deleteProductPermanently(id: string): Promise<void> {
+    if (isSupabaseConfigured) {
+      const { error } = await supabase
+        .from('products')
+        .delete()
+        .eq('id', id);
+      if (error) throw error;
+    } else {
+      const products = getLocalProducts().filter(p => p.id !== id);
+      saveLocalProducts(products);
+    }
+  },
+
   // Téléverser une photographie
   async addImage(
     productId: string,

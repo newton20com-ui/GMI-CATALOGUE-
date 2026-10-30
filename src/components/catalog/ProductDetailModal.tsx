@@ -92,6 +92,30 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
     }
   };
 
+  const handleDeletePermanently = async () => {
+    if (!canArchive) return;
+    const confirmVal = window.prompt(
+      `ATTENTION : Suppression définitive de l'article :\n"${product.name}" (${product.internal_code})\n\nTous ses conditionnements, tarifs et photos seront définitivement effacés.\n\nPour confirmer, tapez SUPPRIMER :`
+    );
+    if (confirmVal !== 'SUPPRIMER') {
+      if (confirmVal !== null) {
+        alert('Suppression annulée : mot de confirmation non saisi.');
+      }
+      return;
+    }
+
+    setIsProcessing(true);
+    setActionError('');
+    try {
+      await catalogService.deleteProductPermanently(product.id);
+      onRefresh();
+      onClose();
+    } catch (err: any) {
+      setActionError(err.message || 'Erreur lors de la suppression.');
+      setIsProcessing(false);
+    }
+  };
+
   const handleToggleArchive = async () => {
     if (!canArchive) return;
     setIsProcessing(true);
@@ -164,24 +188,36 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             )}
 
             {canArchive && (
-              <button
-                onClick={handleToggleArchive}
-                disabled={isProcessing}
-                className="btn-secondary text-xs py-1.5 px-3 gap-1.5 hover:text-amber-700"
-                title={product.status === 'archive' ? 'Restaurer le produit' : 'Archiver le produit'}
-              >
-                {product.status === 'archive' ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Restaurer</span>
-                  </>
-                ) : (
-                  <>
-                    <Archive className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Archiver</span>
-                  </>
-                )}
-              </button>
+              <>
+                <button
+                  onClick={handleToggleArchive}
+                  disabled={isProcessing}
+                  className="btn-secondary text-xs py-1.5 px-3 gap-1.5 hover:text-amber-700"
+                  title={product.status === 'archive' ? 'Restaurer le produit' : 'Archiver le produit'}
+                >
+                  {product.status === 'archive' ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Restaurer</span>
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Archiver</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  onClick={handleDeletePermanently}
+                  disabled={isProcessing}
+                  className="btn-secondary text-xs py-1.5 px-2.5 gap-1 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
+                  title="Supprimer définitivement cet article"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Supprimer</span>
+                </button>
+              </>
             )}
 
             <button
