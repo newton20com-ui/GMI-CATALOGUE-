@@ -7,6 +7,7 @@ interface AuthContextType {
   currentUser: UserProfile | null;
   loading: boolean;
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
+  signUp: (email: string, password: string, fullName: string) => Promise<{ success: boolean; error?: string; isFirstAdmin?: boolean }>;
   logout: () => Promise<void>;
   hasPermission: (permission: PermissionKey) => boolean;
   isSuperAdmin: () => boolean;
@@ -29,7 +30,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           const { data: { session } } = await supabase.auth.getSession();
           if (session?.user) {
-            // Charger le profil utilisateur depuis Supabase
             const { data: profile } = await supabase
               .from('user_profiles')
               .select('*, user_permissions(permission_key)')
@@ -53,7 +53,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setCurrentUser(null);
         }
       } else {
-        // Mode local ou démo
         const savedUserId = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
         const user = MOCK_USERS.find(u => u.id === savedUserId) || MOCK_USERS[0];
         setCurrentUser(user);
@@ -68,7 +67,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (isSupabaseConfigured) {
       try {
         const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+          email: email.trim(),
           password: password || '',
         });
 
@@ -82,7 +81,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           .eq('id', data.user.id)
           .single();
 
-        if (!profile || !profile.is_active) {
+        if (!profile) {
+          return { success: false, error: 'Profil introuvable. Veuillez exécuter les scripts SQL dans Supabase.' };
+        }
+
+        if (!profile.is_active) {
           await supabase.auth.signOut();
           return { success: false, error: 'Ce compte est inactif ou en attente d\'activation par l\'administrateur.' };
         }
@@ -98,7 +101,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, error: err.message || 'Erreur lors de la connexion' };
       }
     } else {
-      // Authentification locale
       const user = MOCK_USERS.find(u => u.email.toLowerCase() === email.trim().toLowerCase());
       if (user) {
         if (!user.is_active) {
@@ -109,6 +111,55 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true };
       }
       return { success: false, error: 'Utilisateur introuvable. Utilisez les comptes de démonstration ou configurez Supabase.' };
+    }
+  };
+
+  const signUp = async (email: string, password: string, fullName: string) => {
+    if (!isSupabaseConfigured) {
+      return { success: false, error: 'Mode local actif. Utilisez la connexion directe.' };
+    }
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email: email.trim(),
+        password,
+        options: {
+          data: {
+            full_name: fullName.trim(),
+          }
+        }
+      });
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      if (data.user) {
+        // Tenter de récupérer le profil créé par le trigger on_auth_user_created
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('*, user_permissions(permission_key)')
+          .eq('id', data.user.id)
+          .single();
+
+        if (profile && profile.is_active) {
+          const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
+          setCurrentUser({
+            ...profile,
+            permissions,
+          });
+          return { success: true, isFirstAdmin: profile.role === 'super_admin' };
+        }
+
+        return { 
+          success: true, 
+          error: 'Compte créé avec succès ! S\'il s\'agit du premier compte, il a été promu Super Admin. Sinon, il est en attente d\'activation.' 
+        };
+      }
+
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Erreur lors de la création du compte.' };
     }
   };
 
@@ -144,6 +195,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentUser,
         loading,
         login,
+        signUp,
         logout,
         hasPermission,
         isSuperAdmin,
