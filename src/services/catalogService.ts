@@ -249,13 +249,27 @@ export const catalogService = {
     prices?: Record<string, number>; // code -> montant
     images?: Array<{ url: string; filename: string; view_type: any; caption?: string }>;
     userId?: string;
+    internal_code?: string;
   }): Promise<Product> {
     const categories = await this.getCategories();
     const category = categories.find(c => c.id === data.category_id);
     const categoryName = category?.name || 'Articles divers';
 
-    const localProducts = getLocalProducts();
-    const internalCode = generateInternalCode(categoryName, localProducts);
+    let prefix = 'DIV';
+    const lowerCat = categoryName.toLowerCase();
+    if (lowerCat.includes('imprimerie')) prefix = 'IMP';
+    else if (lowerCat.includes('sérigraphie') || lowerCat.includes('serigraphie')) prefix = 'SER';
+
+    // Déterminer le code interne unique
+    let internalCode = data.internal_code;
+    if (!internalCode) {
+      if (isSupabaseConfigured) {
+        internalCode = `GMI-${prefix}-${Date.now().toString().slice(-4)}${Math.floor(Math.random() * 900 + 100)}`;
+      } else {
+        const localProducts = getLocalProducts();
+        internalCode = generateInternalCode(categoryName, localProducts);
+      }
+    }
 
     const newProductId = isSupabaseConfigured ? undefined : `prod-${Date.now()}`;
     const defaultVariantId = `var-${Date.now()}`;
@@ -411,7 +425,7 @@ export const catalogService = {
       return insertedProduct;
     } else {
       // Stockage local
-      const updatedList = [newProduct, ...localProducts];
+      const updatedList = [newProduct, ...getLocalProducts()];
       saveLocalProducts(updatedList);
       return newProduct;
     }
@@ -764,9 +778,17 @@ export const catalogService = {
       } else if (lowerCat.includes('sérigraphie') || lowerCat.includes('serigraphie')) {
         prefix = 'SER';
       }
+      let refPart = item.legacy_reference ? item.legacy_reference.replace(/[^a-zA-Z0-9]/g, '') : '';
+      if (!refPart) {
+        refPart = String(i + 1).padStart(4, '0');
+      }
+      let uniqueCode = `GMI-${prefix}-${refPart}`;
 
-      codeCounter++;
-      const uniqueCode = `GMI-${prefix}-${codeCounter.toString().padStart(4, '0')}`;
+      // Si ce code existe déjà, ajouter un suffixe séquentiel pour garantir l'unicité stricte
+      if (currentProducts.some(p => p.internal_code === uniqueCode)) {
+        uniqueCode = `${uniqueCode}-${i + 1}`;
+      }
+      currentProducts.push({ internal_code: uniqueCode });
 
       const pricesMap: Record<string, number> = {};
       if (item.detail_price) pricesMap['detail'] = item.detail_price;
@@ -776,6 +798,7 @@ export const catalogService = {
 
       try {
         await this.createProduct({
+          internal_code: uniqueCode,
           name: item.name,
           category_id: matchedCat.id,
           legacy_reference: item.legacy_reference,
