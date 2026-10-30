@@ -700,6 +700,7 @@ export const catalogService = {
       wholesale_price?: number;
       reseller_price?: number;
       purchase_price?: number;
+      isDuplicate?: boolean;
     }>,
     filename: string,
     userId?: string
@@ -710,7 +711,15 @@ export const catalogService = {
     let duplicates = 0;
     const errors: string[] = [];
 
-    const products = getLocalProducts();
+    let currentProducts: any[] = [];
+    if (isSupabaseConfigured) {
+      const { data } = await supabase.from('products').select('id, internal_code, legacy_reference, name');
+      currentProducts = data || [];
+    } else {
+      currentProducts = getLocalProducts();
+    }
+
+    let codeCounter = Date.now() % 100000;
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -720,13 +729,8 @@ export const catalogService = {
         continue;
       }
 
-      // Recherche de doublon
-      const dupCheck = this.checkDuplicates(item.name, item.legacy_reference);
-      if (dupCheck.isDuplicate) {
+      if (item.isDuplicate) {
         duplicates++;
-        skipped++;
-        errors.push(`Ligne ${i + 1} (${item.name}): Ignoré car doublon détecté avec ${dupCheck.matchedProduct?.internal_code} (${dupCheck.reason}).`);
-        continue;
       }
 
       // Correspondance catégorie ou catégorie par défaut
@@ -739,7 +743,16 @@ export const catalogService = {
         matchedCat = categories.find(c => c.name.includes('divers')) || categories[0];
       }
 
-      const internalCode = generateInternalCode(matchedCat.name, products);
+      let prefix = 'DIV';
+      const lowerCat = matchedCat.name.toLowerCase();
+      if (lowerCat.includes('imprimerie')) {
+        prefix = 'IMP';
+      } else if (lowerCat.includes('sérigraphie') || lowerCat.includes('serigraphie')) {
+        prefix = 'SER';
+      }
+
+      codeCounter++;
+      const uniqueCode = `GMI-${prefix}-${codeCounter.toString().padStart(4, '0')}`;
 
       const pricesMap: Record<string, number> = {};
       if (item.detail_price) pricesMap['detail'] = item.detail_price;
@@ -755,14 +768,15 @@ export const catalogService = {
           brand: item.brand,
           model_reference: item.model_reference,
           short_description: item.short_description,
-          status: 'a_verifier', // Exigence : statut "À vérifier" pour les références historiques
+          status: 'a_verifier', // Statut "À vérifier" pour les références historiques
           prices: pricesMap,
+          default_variant_sku: `${uniqueCode}-STD`,
           userId,
         });
         imported++;
       } catch (err: any) {
         skipped++;
-        errors.push(`Ligne ${i + 1}: ${err.message || 'Erreur lors de la création'}`);
+        errors.push(`Ligne ${i + 1} (${item.name}): ${err.message || 'Erreur lors de la création'}`);
       }
     }
 
