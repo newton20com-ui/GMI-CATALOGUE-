@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Product, ProductImage, PermissionKey, ImageViewType } from '../../types';
+import { Product, ProductImage, PermissionKey, ImageViewType, UserProfile } from '../../types';
 import { formatPriceFCFA, formatDateFr, IMAGE_VIEW_TYPES, INITIAL_PRICE_TYPES } from '../../lib/constants';
 import { 
   X, 
@@ -32,6 +32,7 @@ interface ProductDetailModalProps {
   onRefresh: () => void;
   hasPermission: (perm: PermissionKey) => boolean;
   isSuperAdmin: boolean;
+  currentUser?: UserProfile | null;
 }
 
 export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
@@ -41,6 +42,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   onRefresh,
   hasPermission,
   isSuperAdmin,
+  currentUser,
 }) => {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [isZoomed, setIsZoomed] = useState(false);
@@ -53,6 +55,9 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const canEdit = hasPermission('product:edit');
   const canArchive = hasPermission('product:archive');
   const canManagePhotos = hasPermission('photo:manage');
+
+  // Sécurité stricte : la suppression définitive est réservée EXCLUSIVEMENT aux administrateurs
+  const canDelete = isSuperAdmin || (currentUser?.role === 'admin' && hasPermission('product:archive'));
 
   const images = product.images && product.images.length > 0
     ? product.images
@@ -207,17 +212,19 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     </>
                   )}
                 </button>
-
-                <button
-                  onClick={handleDeletePermanently}
-                  disabled={isProcessing}
-                  className="btn-secondary text-xs py-1.5 px-2.5 gap-1 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
-                  title="Supprimer définitivement cet article"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Supprimer</span>
-                </button>
               </>
+            )}
+
+            {canDelete && (
+              <button
+                onClick={handleDeletePermanently}
+                disabled={isProcessing}
+                className="btn-secondary text-xs py-1.5 px-2.5 gap-1 text-rose-600 hover:bg-rose-50 hover:border-rose-300"
+                title="Supprimer définitivement cet article (Réservé aux administrateurs)"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Supprimer</span>
+              </button>
             )}
 
             <button

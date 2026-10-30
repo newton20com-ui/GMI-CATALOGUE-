@@ -155,6 +155,7 @@ const MainApplication: React.FC = () => {
           }}
           hasPermission={hasPermission}
           isSuperAdmin={isSuperAdmin()}
+          currentUser={currentUser}
         />
       )}
 
