@@ -741,6 +741,11 @@ export const catalogService = {
 
     let currentProducts: any[] = [];
     if (isSupabaseConfigured) {
+      try {
+        await supabase.auth.refreshSession();
+      } catch {
+        // Ignorer si la session est déjà valide
+      }
       const { data } = await supabase.from('products').select('id, internal_code, legacy_reference, name');
       currentProducts = data || [];
     } else {
@@ -757,8 +762,20 @@ export const catalogService = {
         continue;
       }
 
-      if (item.isDuplicate) {
+      // Vérifier si cet article a déjà été importé lors d'un précédent passage
+      const cleanItemName = item.name.trim().toLowerCase();
+      const cleanItemRef = item.legacy_reference ? item.legacy_reference.trim().toLowerCase() : '';
+
+      const alreadyInserted = currentProducts.some(p => {
+        const pRef = p.legacy_reference ? String(p.legacy_reference).trim().toLowerCase() : '';
+        const pName = p.name ? String(p.name).trim().toLowerCase() : '';
+        return (cleanItemRef && pRef && pRef === cleanItemRef) || (pName === cleanItemName);
+      });
+
+      if (alreadyInserted) {
         duplicates++;
+        // Déjà importé précédemment, on passe directement sans re-créer
+        continue;
       }
 
       // Correspondance catégorie ou catégorie par défaut
@@ -778,6 +795,7 @@ export const catalogService = {
       } else if (lowerCat.includes('sérigraphie') || lowerCat.includes('serigraphie')) {
         prefix = 'SER';
       }
+
       let refPart = item.legacy_reference ? item.legacy_reference.replace(/[^a-zA-Z0-9]/g, '') : '';
       if (!refPart) {
         refPart = String(i + 1).padStart(4, '0');
@@ -788,7 +806,7 @@ export const catalogService = {
       if (currentProducts.some(p => p.internal_code === uniqueCode)) {
         uniqueCode = `${uniqueCode}-${i + 1}`;
       }
-      currentProducts.push({ internal_code: uniqueCode });
+      currentProducts.push({ internal_code: uniqueCode, legacy_reference: item.legacy_reference, name: item.name });
 
       const pricesMap: Record<string, number> = {};
       if (item.detail_price) pricesMap['detail'] = item.detail_price;
@@ -796,24 +814,50 @@ export const catalogService = {
       if (item.reseller_price) pricesMap['revendeur'] = item.reseller_price;
       if (item.purchase_price) pricesMap['achat'] = item.purchase_price;
 
+      // Rafraîchir la session JWT Supabase périodiquement pour éviter l'expiration
+      if (isSupabaseConfigured && i > 0 && i % 25 === 0) {
+        try {
+          await supabase.auth.refreshSession();
+        } catch {
+          // continue
+        }
+      }
+
+      const productPayload = {
+        internal_code: uniqueCode,
+        name: item.name,
+        category_id: matchedCat.id,
+        legacy_reference: item.legacy_reference,
+        brand: item.brand,
+        model_reference: item.model_reference,
+        short_description: item.short_description,
+        status: 'a_verifier' as ProductStatus,
+        prices: pricesMap,
+        default_variant_sku: `${uniqueCode}-STD`,
+        userId,
+      };
+
       try {
-        await this.createProduct({
-          internal_code: uniqueCode,
-          name: item.name,
-          category_id: matchedCat.id,
-          legacy_reference: item.legacy_reference,
-          brand: item.brand,
-          model_reference: item.model_reference,
-          short_description: item.short_description,
-          status: 'a_verifier', // Statut "À vérifier" pour les références historiques
-          prices: pricesMap,
-          default_variant_sku: `${uniqueCode}-STD`,
-          userId,
-        });
+        await this.createProduct(productPayload);
         imported++;
       } catch (err: any) {
+        const msg = String(err.message || '');
+        // Si le token JWT a expiré, on tente de le rafraîchir et de réinsérer
+        if (msg.includes('JWT') || msg.includes('expired') || msg.includes('token') || msg.includes('session')) {
+          try {
+            await supabase.auth.refreshSession();
+            await this.createProduct(productPayload);
+            imported++;
+            continue;
+          } catch (retryErr: any) {
+            skipped++;
+            errors.push(`Ligne ${i + 1} (${item.name}): ${retryErr.message || 'Session expirée'}`);
+            continue;
+          }
+        }
+
         skipped++;
-        errors.push(`Ligne ${i + 1} (${item.name}): ${err.message || 'Erreur lors de la création'}`);
+        errors.push(`Ligne ${i + 1} (${item.name}): ${msg || 'Erreur lors de la création'}`);
       }
     }
 
