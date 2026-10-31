@@ -6,7 +6,8 @@ import { isSupabaseConfigured } from '../../lib/supabase';
 
 export const LoginView: React.FC = () => {
   const { login, signUp, isDemoMode } = useAuth();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const isSetupRequested = typeof window !== 'undefined' && window.location.search.includes('setup=first-admin');
+  const [mode, setMode] = useState<'login' | 'signup'>(isSetupRequested ? 'signup' : 'login');
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -95,20 +96,20 @@ export const LoginView: React.FC = () => {
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 sm:px-10 shadow-modal rounded-2xl border border-slate-100">
           
-          {/* Tabs Login vs Signup */}
-          <div className="flex border-b border-slate-100 mb-6">
-            <button
-              onClick={() => { setMode('login'); setErrorMsg(''); setSuccessMsg(''); }}
-              className={`flex-1 pb-3 text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
-                mode === 'login'
-                  ? 'border-b-2 border-brand-600 text-brand-600'
-                  : 'text-slate-400 hover:text-slate-700'
-              }`}
-            >
-              <LogIn className="w-4 h-4" />
-              Connexion
-            </button>
-            {isSupabaseConfigured && (
+          {/* Tabs or Title */}
+          {isSetupRequested ? (
+            <div className="flex border-b border-slate-100 mb-6">
+              <button
+                onClick={() => { setMode('login'); setErrorMsg(''); setSuccessMsg(''); }}
+                className={`flex-1 pb-3 text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
+                  mode === 'login'
+                    ? 'border-b-2 border-brand-600 text-brand-600'
+                    : 'text-slate-400 hover:text-slate-700'
+                }`}
+              >
+                <LogIn className="w-4 h-4" />
+                Connexion
+              </button>
               <button
                 onClick={() => { setMode('signup'); setErrorMsg(''); setSuccessMsg(''); }}
                 className={`flex-1 pb-3 text-xs font-bold transition-colors flex items-center justify-center gap-2 ${
@@ -120,8 +121,16 @@ export const LoginView: React.FC = () => {
                 <UserPlus className="w-4 h-4" />
                 Premier Administrateur
               </button>
-            )}
-          </div>
+            </div>
+          ) : (
+            <div className="mb-6 text-center border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center justify-center gap-2">
+                <LogIn className="w-5 h-5 text-brand-600" />
+                Connexion à votre espace
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">Identifiez-vous pour accéder au catalogue sécurisé GMI</p>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="mb-5 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs flex items-start gap-2.5 animate-in fade-in duration-200">
@@ -240,7 +249,7 @@ export const LoginView: React.FC = () => {
             </div>
           )}
 
-          {isSupabaseConfigured && (
+          {isSupabaseConfigured && isSetupRequested && (
             <div className="mt-6 pt-4 border-t border-slate-100 text-[11px] text-slate-500 flex items-start gap-2">
               <Info className="w-4 h-4 text-brand-600 mt-0.5 flex-shrink-0" />
               <span>

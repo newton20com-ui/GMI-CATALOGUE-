@@ -25,6 +25,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isDemoMode = !isSupabaseConfigured;
 
   useEffect(() => {
+    let unsubscribeAuth: (() => void) | undefined;
+
     async function initAuth() {
       if (isSupabaseConfigured) {
         try {
@@ -34,7 +36,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               .from('user_profiles')
               .select('*, user_permissions(permission_key)')
               .eq('id', session.user.id)
-              .single();
+              .maybeSingle();
 
             if (profile && profile.is_active) {
               const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
@@ -52,6 +54,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error('Erreur vérification session Supabase:', err);
           setCurrentUser(null);
         }
+
+        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+          if (session?.user) {
+            const { data: profile } = await supabase
+              .from('user_profiles')
+              .select('*, user_permissions(permission_key)')
+              .eq('id', session.user.id)
+              .maybeSingle();
+
+            if (profile && profile.is_active) {
+              const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
+              setCurrentUser({
+                ...profile,
+                permissions,
+              });
+            }
+          } else if (event === 'SIGNED_OUT') {
+            setCurrentUser(null);
+          }
+        });
+
+        unsubscribeAuth = () => subscription.unsubscribe();
       } else {
         const savedUserId = localStorage.getItem(LOCAL_STORAGE_USER_KEY);
         const user = MOCK_USERS.find(u => u.id === savedUserId) || MOCK_USERS[0];
@@ -61,6 +85,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     initAuth();
+
+    return () => {
+      if (unsubscribeAuth) unsubscribeAuth();
+    };
   }, []);
 
   const login = async (email: string, password?: string) => {
@@ -126,7 +154,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         options: {
           data: {
             full_name: fullName.trim(),
-          }
+          },
+          emailRedirectTo: typeof window !== 'undefined' && window.location.origin.includes('workers.dev')
+            ? `${window.location.origin}/`
+            : 'https://gmi-catalogue.newton2-0-com.workers.dev/'
         }
       });
 
