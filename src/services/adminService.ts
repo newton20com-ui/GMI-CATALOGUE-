@@ -1,6 +1,7 @@
 import { UserProfile, UserRole, PermissionKey, Category } from '../types';
 import { MOCK_USERS, MOCK_CATEGORIES } from '../lib/mockData';
 import { isSupabaseConfigured, supabase, createIsolatedAuthClient, ensureFreshSession } from '../lib/supabase';
+import { PRODUCTION_SITE_URL } from '../lib/constants';
 
 const USERS_STORAGE_KEY = 'gmi_catalog_users_v1';
 const CATEGORIES_STORAGE_KEY = 'gmi_catalog_categories_v1';
@@ -170,7 +171,8 @@ export const adminService = {
     fullName: string,
     role: UserRole,
     initialPermissions: PermissionKey[],
-    customPassword?: string
+    customPassword?: string,
+    invitationMode: 'email' | 'password' = 'email'
   ): Promise<{ profile: UserProfile; emailSent: boolean; temporaryPassword?: string }> {
     const cleanEmail = email.trim().toLowerCase();
     const cleanFullName = fullName.trim();
@@ -195,14 +197,65 @@ export const adminService = {
         throw new Error(`Un collaborateur avec l'adresse ${cleanEmail} existe déjà dans le catalogue.`);
       }
 
-      // 1. Tenter l'envoi de l'invitation par email automatique via Supabase Edge Function (Option B)
+      // CAS 1 : INVITATION OFFICIELLE PAR EMAIL (Option A)
+      if (invitationMode === 'email') {
+        try {
+          const { data: edgeData, error: edgeError } = await supabase.functions.invoke('invite-user', {
+            body: {
+              action: 'invite',
+              email: cleanEmail,
+              fullName: cleanFullName,
+              role,
+              permissions: initialPermissions,
+            },
+          });
+
+          if (!edgeError && edgeData?.success) {
+            const finalProfile: UserProfile = {
+              id: edgeData.userId || `user-${Date.now()}`,
+              email: cleanEmail,
+              full_name: cleanFullName,
+              role,
+              is_active: true,
+              is_protected: false,
+              permissions: initialPermissions,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            };
+            return {
+              profile: finalProfile,
+              emailSent: true,
+            };
+          }
+
+          if (edgeData?.error) {
+            throw new Error(edgeData.error);
+          }
+          if (edgeError) {
+            throw new Error(`Erreur Edge Function: ${edgeError.message}`);
+          }
+        } catch (edgeErr: any) {
+          if (edgeErr?.message && edgeErr.message.includes('déjà')) {
+            throw edgeErr;
+          }
+          throw new Error(
+            edgeErr?.message || 
+            "L'envoi de l'email d'invitation n'a pas pu aboutir. Vérifiez que l'Edge Function Supabase 'invite-user' est déployée ou choisissez le mode 'Mot de passe temporaire'."
+          );
+        }
+      }
+
+      // CAS 2 : CRÉATION AVEC MOT DE PASSE TEMPORAIRE (Option B)
+      // 1. Tenter d'abord la création directe via l'Edge Function (compte pré-confirmé sans aucun envoi d'email parasite)
       try {
         const { data: edgeData, error: edgeError } = await supabase.functions.invoke('invite-user', {
           body: {
+            action: 'create',
             email: cleanEmail,
             fullName: cleanFullName,
             role,
             permissions: initialPermissions,
+            password: temporaryPassword,
           },
         });
 
@@ -220,22 +273,22 @@ export const adminService = {
           };
           return {
             profile: finalProfile,
-            emailSent: true,
+            emailSent: false,
+            temporaryPassword,
           };
         }
 
-        if (edgeData?.error && edgeData.error.includes('déjà un compte')) {
+        if (edgeData?.error && edgeData.error.includes('déjà')) {
           throw new Error(edgeData.error);
         }
       } catch (edgeErr: any) {
-        if (edgeErr?.message && edgeErr.message.includes('déjà un compte')) {
+        if (edgeErr?.message && edgeErr.message.includes('déjà')) {
           throw edgeErr;
         }
-        console.info('Edge function invite-user non déployée ou indisponible, utilisation du mode de secours:', edgeErr?.message);
+        console.info('Edge function create non disponible, repli sur client isolé:', edgeErr?.message);
       }
 
-      // 2. Mode de secours direct : Créer le compte utilisateur dans Supabase auth.users via un client isolé
-      // afin de ne pas toucher au jeton de l'administrateur connecté.
+      // 2. Mode de secours direct si Edge Function non déployée : client isolé sans écraser la session admin
       const isolatedAuth = createIsolatedAuthClient();
       const { data: authData, error: authError } = await isolatedAuth.auth.signUp({
         email: cleanEmail,
@@ -244,9 +297,7 @@ export const adminService = {
           data: {
             full_name: cleanFullName,
           },
-          emailRedirectTo: typeof window !== 'undefined' && window.location.origin.includes('workers.dev')
-            ? `${window.location.origin}/`
-            : 'https://gmi-catalogue.newton2-0-com.workers.dev/'
+          emailRedirectTo: PRODUCTION_SITE_URL,
         },
       });
 
@@ -313,7 +364,7 @@ export const adminService = {
         }
       }
 
-      // 2. Attribuer les permissions sélectionnées par l'administrateur
+      // Attribuer les permissions sélectionnées par l'administrateur
       if (initialPermissions.length > 0) {
         await supabase.from('user_permissions').delete().eq('user_id', newUserId);
         await supabase.from('user_permissions').insert(
@@ -361,7 +412,11 @@ export const adminService = {
       };
 
       saveLocalUsers([...users, newUser]);
-      return { profile: newUser, emailSent: false, temporaryPassword };
+      return { 
+        profile: newUser, 
+        emailSent: invitationMode === 'email', 
+        temporaryPassword 
+      };
     }
   },
 

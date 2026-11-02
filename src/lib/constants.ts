@@ -1,4 +1,4 @@
-import { Category, PermissionDefinition, PriceType } from '../types';
+import { Category, PermissionDefinition, PriceType, PermissionKey } from '../types';
 
 export const CURRENCY = 'FCFA';
 
@@ -233,3 +233,23 @@ export function formatDateFr(dateString?: string): string {
     return dateString;
   }
 }
+
+// URL officielle de production Cloudflare pour le Catalogue GMI (utilisée pour l'authentification et invitations)
+export const PRODUCTION_SITE_URL = 'https://gmi-catalogue.newton2-0-com.workers.dev/';
+
+// Permissions par défaut selon le rôle attribué
+export const DEFAULT_ROLE_PERMISSIONS: Record<'staff' | 'admin', PermissionKey[]> = {
+  staff: ['catalog:view'],
+  admin: [
+    'catalog:view',
+    'product:create',
+    'product:edit',
+    'product:archive',
+    'photo:manage',
+    'category:manage',
+    'price:view:gros',
+    'price:view:revendeur',
+    'import:execute'
+  ]
+};
+

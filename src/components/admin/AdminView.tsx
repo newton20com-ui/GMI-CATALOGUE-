@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UserProfile, UserRole, PermissionKey, Category, Product } from '../../types';
-import { SYSTEM_PERMISSIONS, formatDateFr } from '../../lib/constants';
+import { SYSTEM_PERMISSIONS, formatDateFr, DEFAULT_ROLE_PERMISSIONS, PRODUCTION_SITE_URL } from '../../lib/constants';
 import { adminService } from '../../services/adminService';
 import { catalogService } from '../../services/catalogService';
 import { 
@@ -20,11 +20,15 @@ import {
   Trash2, 
   Plus, 
   RotateCcw,
-  Sparkles,
   Key,
   Copy,
   RefreshCw,
-  MailCheck
+  MailCheck,
+  Mail,
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
+  Sliders
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -53,11 +57,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
-  // Invitation Form
+  // Formulaire d'invitation / création
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
   const [inviteRole, setInviteRole] = useState<UserRole>('staff');
   const [invitePassword, setInvitePassword] = useState('');
+  const [inviteMode, setInviteMode] = useState<'email' | 'password'>('email');
+  const [invitePermissions, setInvitePermissions] = useState<PermissionKey[]>(DEFAULT_ROLE_PERMISSIONS.staff);
+  const [showCustomPermissions, setShowCustomPermissions] = useState(false);
   const [inviteLoading, setInviteLoading] = useState(false);
   const [createdCredentials, setCreatedCredentials] = useState<{
     fullName: string;
@@ -67,8 +74,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     emailSent: boolean;
   } | null>(null);
   const [copiedPass, setCopiedPass] = useState(false);
+
+  // Suppression d'utilisateur
   const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
   const [isDeletingUser, setIsDeletingUser] = useState(false);
+
+  // Option 2 : Modification du profil utilisateur
+  const [editUserModalOpen, setEditUserModalOpen] = useState(false);
+  const [userToEdit, setUserToEdit] = useState<UserProfile | null>(null);
+  const [editFullName, setEditFullName] = useState('');
+  const [editRole, setEditRole] = useState<UserRole>('staff');
+  const [editIsActive, setEditIsActive] = useState(true);
+  const [editResetPermissions, setEditResetPermissions] = useState(false);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const generateRandomPassword = () => `GMI-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}!`;
 
@@ -76,8 +94,40 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     setInviteEmail('');
     setInviteFullName('');
     setInviteRole('staff');
+    setInviteMode('email');
+    setInvitePermissions(DEFAULT_ROLE_PERMISSIONS.staff);
+    setShowCustomPermissions(false);
     setInvitePassword(generateRandomPassword());
     setInviteModalOpen(true);
+  };
+
+  const handleInviteRoleChange = (newRole: UserRole) => {
+    setInviteRole(newRole);
+    // Ajuster automatiquement les permissions pré-cochées selon le rôle
+    if (newRole === 'admin') {
+      setInvitePermissions(DEFAULT_ROLE_PERMISSIONS.admin);
+    } else {
+      setInvitePermissions(DEFAULT_ROLE_PERMISSIONS.staff);
+    }
+  };
+
+  const handleToggleInvitePermission = (key: PermissionKey) => {
+    setInvitePermissions(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+  };
+
+  const handleOpenEditModal = (user: UserProfile) => {
+    if (user.is_protected) {
+      setErrorMsg("Sécurité absolue : Le profil de l'Administrateur Principal protégé ne peut pas être modifié.");
+      return;
+    }
+    setUserToEdit(user);
+    setEditFullName(user.full_name);
+    setEditRole(user.role === 'super_admin' ? 'admin' : user.role);
+    setEditIsActive(user.is_active);
+    setEditResetPermissions(false);
+    setEditUserModalOpen(true);
   };
 
   const isSuperAdmin = currentUser.role === 'super_admin';
@@ -166,6 +216,53 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     }
   };
 
+  const handleSaveUserEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!userToEdit) return;
+    if (!editFullName.trim()) {
+      setErrorMsg('Veuillez renseigner le nom complet du collaborateur.');
+      return;
+    }
+
+    setIsSavingEdit(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      const updated = await adminService.updateUserStatus(userToEdit.id, {
+        full_name: editFullName.trim(),
+        role: editRole,
+        is_active: editIsActive,
+      });
+
+      let finalPerms: PermissionKey[] = (userToEdit.permissions as PermissionKey[]) || [];
+      if (editResetPermissions) {
+        finalPerms = DEFAULT_ROLE_PERMISSIONS[editRole as 'staff' | 'admin'] || ['catalog:view'];
+        await adminService.updateUserPermissions(userToEdit.id, finalPerms);
+      }
+
+      setSuccessMsg(`Profil de ${editFullName.trim()} mis à jour avec succès.`);
+      setEditUserModalOpen(false);
+      setUserToEdit(null);
+
+      if (selectedUser?.id === userToEdit.id) {
+        setSelectedUser({
+          ...selectedUser,
+          ...updated,
+          full_name: editFullName.trim(),
+          role: editRole,
+          is_active: editIsActive,
+          permissions: finalPerms,
+        });
+      }
+      loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erreur lors de la mise à jour du profil.');
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
   const handleInviteSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -173,13 +270,19 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     setInviteLoading(true);
 
     try {
-      const defaultPerms: PermissionKey[] = ['catalog:view'];
-      if (inviteRole === 'admin') {
-        defaultPerms.push('product:create', 'product:edit', 'photo:manage', 'price:view:gros', 'price:view:revendeur', 'import:execute');
-      }
+      const perms = invitePermissions.length > 0 
+        ? invitePermissions 
+        : (DEFAULT_ROLE_PERMISSIONS[inviteRole as 'staff' | 'admin'] || ['catalog:view']);
 
       const pwd = invitePassword.trim() || generateRandomPassword();
-      const res = await adminService.inviteUser(inviteEmail, inviteFullName, inviteRole, defaultPerms, pwd);
+      const res = await adminService.inviteUser(
+        inviteEmail, 
+        inviteFullName, 
+        inviteRole, 
+        perms, 
+        pwd,
+        inviteMode
+      );
 
       setCreatedCredentials({
         fullName: inviteFullName,
@@ -391,6 +494,16 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                           <button
                             onClick={(e) => {
                               e.stopPropagation();
+                              handleOpenEditModal(u);
+                            }}
+                            className="p-1.5 rounded text-xs text-slate-400 hover:text-brand-600 hover:bg-brand-50 transition-colors"
+                            title="Modifier ce profil"
+                          >
+                            <Edit2 className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
                               handleToggleUserActive(u);
                             }}
                             className={`p-1.5 rounded text-xs transition-colors ${
@@ -425,7 +538,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
           <div className="lg:col-span-7">
             {selectedUser ? (
               <div className="card-container p-5">
-                <div className="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between">
+                <div className="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900">
                       Permissions individuelles : {selectedUser.full_name}
@@ -437,15 +550,26 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                       Accès total inaltérable
                     </span>
                   ) : (
-                    <button
-                      type="button"
-                      onClick={() => setUserToDelete(selectedUser)}
-                      className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 flex items-center gap-1.5 transition-colors"
-                      title="Supprimer définitivement cet utilisateur"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                      <span>Supprimer le compte</span>
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditModal(selectedUser)}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-brand-700 hover:text-brand-800 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 flex items-center gap-1.5 transition-colors"
+                        title="Modifier le nom, rôle ou statut de ce collaborateur"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                        <span>Modifier le profil</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setUserToDelete(selectedUser)}
+                        className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 flex items-center gap-1.5 transition-colors"
+                        title="Supprimer définitivement cet utilisateur"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Supprimer</span>
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -650,39 +774,113 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
         </div>
       )}
 
-      {/* Invite User Modal */}
+      {/* MODAL 1 : INVITER / CRÉER UN COLLABORATEUR (ENRICHI) */}
       {inviteModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
-              <h3 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                <UserPlus className="w-4 h-4 text-brand-600" />
-                Inviter un nouvel employé
-              </h3>
+          <div className="bg-white rounded-2xl max-w-lg w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95 max-h-[92vh] flex flex-col overflow-hidden">
+            
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between flex-shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Ajouter un collaborateur</h3>
+                  <p className="text-[11px] text-slate-500">Invitation par email ou création directe avec accès immédiat</p>
+                </div>
+              </div>
               <button 
                 type="button"
                 onClick={() => setInviteModalOpen(false)} 
-                className="text-slate-400 hover:text-slate-600"
+                className="text-slate-400 hover:text-slate-600 p-1"
               >
                 <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleInviteSubmit} className="space-y-4">
+            {/* Modal Form Scrollable */}
+            <form onSubmit={handleInviteSubmit} className="p-6 overflow-y-auto space-y-4">
+              
+              {/* Choix du mode d'invitation */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
+                  Méthode d'intégration <span className="text-rose-500">*</span>
+                </label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <button
+                    type="button"
+                    onClick={() => setInviteMode('email')}
+                    className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                      inviteMode === 'email'
+                        ? 'border-brand-600 bg-brand-50/60 ring-2 ring-brand-500/20'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                        <Mail className={`w-3.5 h-3.5 ${inviteMode === 'email' ? 'text-brand-600' : 'text-slate-400'}`} />
+                        Email officiel
+                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-brand-100 text-brand-700">
+                        Recommandé
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Envoie un lien d'accès sécurisé par email. Le collaborateur choisit son mot de passe.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setInviteMode('password')}
+                    className={`p-3 rounded-xl border text-left transition-all flex flex-col justify-between ${
+                      inviteMode === 'password'
+                        ? 'border-brand-600 bg-brand-50/60 ring-2 ring-brand-500/20'
+                        : 'border-slate-200 hover:border-slate-300 bg-white'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="flex items-center gap-1.5 font-bold text-xs text-slate-900">
+                        <Key className={`w-3.5 h-3.5 ${inviteMode === 'password' ? 'text-brand-600' : 'text-slate-400'}`} />
+                        Mot de passe direct
+                      </span>
+                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
+                        Terrain
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 leading-snug">
+                      Création immédiate sans email. Mot de passe à transmettre manuellement (WhatsApp/SMS).
+                    </p>
+                  </button>
+                </div>
+              </div>
+
+              {/* Indicateur Destination de Production (URL Réelle Supabase) */}
+              <div className="p-2.5 bg-slate-50 border border-slate-200/80 rounded-xl flex items-center justify-between text-[11px]">
+                <div className="flex items-center gap-1.5 text-slate-600 truncate">
+                  <ExternalLink className="w-3.5 h-3.5 text-brand-600 flex-shrink-0" />
+                  <span className="font-medium">URL de destination officielle :</span>
+                  <code className="font-mono text-brand-700 truncate font-semibold">{PRODUCTION_SITE_URL}</code>
+                </div>
+              </div>
+
+              {/* Nom & Prénom */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Nom et prénom <span className="text-rose-500">*</span>
+                  Nom et prénom du collaborateur <span className="text-rose-500">*</span>
                 </label>
                 <input
                   type="text"
                   required
-                  placeholder="Ex: Ouedraogo Moussa"
+                  placeholder="Ex: Traoré Fatou"
                   value={inviteFullName}
                   onChange={(e) => setInviteFullName(e.target.value)}
                   className="input-field text-xs"
                 />
               </div>
 
+              {/* Adresse Email */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
                   Adresse email professionnelle <span className="text-rose-500">*</span>
@@ -690,58 +888,119 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                 <input
                   type="email"
                   required
-                  placeholder="moussa@gmi.bf"
+                  placeholder="fatou@gmi.bf"
                   value={inviteEmail}
                   onChange={(e) => setInviteEmail(e.target.value)}
-                  className="input-field text-xs"
+                  className="input-field text-xs font-mono"
                 />
               </div>
 
+              {/* Rôle */}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Rôle initial
+                  Rôle fonctionnel
                 </label>
                 <select
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as UserRole)}
+                  onChange={(e) => handleInviteRoleChange(e.target.value as UserRole)}
                   className="input-field text-xs"
                 >
-                  <option value="staff">Employé standard (consultation catalogue)</option>
-                  <option value="admin">Responsable / Administrateur commercial</option>
+                  <option value="staff">Employé standard (consultation du catalogue et prix de détail)</option>
+                  <option value="admin">Responsable / Administrateur commercial (gestion complète et tarifs gros/revendeur)</option>
                 </select>
               </div>
 
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-xs font-semibold text-slate-700">
-                    Mot de passe initial provisoire <span className="text-rose-500">*</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setInvitePassword(generateRandomPassword())}
-                    className="text-[11px] text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
-                  >
-                    <RefreshCw className="w-3 h-3" />
-                    Générer
-                  </button>
+              {/* Mot de passe (si mode direct) */}
+              {inviteMode === 'password' && (
+                <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-semibold text-amber-900">
+                      Mot de passe temporaire initial <span className="text-rose-500">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setInvitePassword(generateRandomPassword())}
+                      className="text-[11px] text-brand-700 hover:text-brand-800 font-medium flex items-center gap-1 bg-white px-2 py-0.5 rounded border border-amber-300"
+                    >
+                      <RefreshCw className="w-3 h-3" />
+                      Générer
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      required
+                      placeholder="Ex: GMI-2026-8921!"
+                      value={invitePassword}
+                      onChange={(e) => setInvitePassword(e.target.value)}
+                      className="input-field text-xs pl-9 font-mono bg-white"
+                    />
+                  </div>
+                  <p className="text-[11px] text-amber-800">
+                    Ce mot de passe permettra une connexion immédiate dès validation du formulaire.
+                  </p>
                 </div>
-                <div className="relative">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                  <input
-                    type="text"
-                    required
-                    placeholder="Ex: GMI-2026-8921!"
-                    value={invitePassword}
-                    onChange={(e) => setInvitePassword(e.target.value)}
-                    className="input-field text-xs pl-9 font-mono"
-                  />
-                </div>
-                <p className="text-[11px] text-slate-500 mt-1">
-                  Le collaborateur pourra se connecter dès maintenant avec cet email et ce mot de passe.
-                </p>
+              )}
+
+              {/* Accordéon Personnalisation des Permissions */}
+              <div className="border border-slate-200 rounded-xl overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setShowCustomPermissions(!showCustomPermissions)}
+                  className="w-full px-3 py-2.5 bg-slate-50 hover:bg-slate-100/80 flex items-center justify-between text-xs font-semibold text-slate-800 transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <Sliders className="w-3.5 h-3.5 text-brand-600" />
+                    <span>Habilitations accordées ({invitePermissions.length} active{invitePermissions.length > 1 ? 's' : ''})</span>
+                  </span>
+                  <span className="flex items-center gap-1 text-[11px] text-brand-600 font-medium">
+                    <span>{showCustomPermissions ? 'Masquer' : 'Personnaliser'}</span>
+                    {showCustomPermissions ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                  </span>
+                </button>
+
+                {showCustomPermissions && (
+                  <div className="p-3 bg-white space-y-2.5 max-h-48 overflow-y-auto divide-y divide-slate-100 text-xs">
+                    <div className="flex items-center justify-between pb-1.5 text-[11px]">
+                      <span className="text-slate-500">Cochez les droits attribués :</span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (invitePermissions.length === SYSTEM_PERMISSIONS.length) {
+                            setInvitePermissions(DEFAULT_ROLE_PERMISSIONS[inviteRole as 'staff' | 'admin'] || ['catalog:view']);
+                          } else {
+                            setInvitePermissions(SYSTEM_PERMISSIONS.map(p => p.key));
+                          }
+                        }}
+                        className="text-brand-600 hover:text-brand-700 font-medium"
+                      >
+                        {invitePermissions.length === SYSTEM_PERMISSIONS.length ? 'Réinitialiser' : 'Tout cocher'}
+                      </button>
+                    </div>
+                    {SYSTEM_PERMISSIONS.map((p) => {
+                      const isChecked = invitePermissions.includes(p.key);
+                      return (
+                        <label key={p.key} className="pt-2 flex items-start gap-2.5 cursor-pointer hover:bg-slate-50 p-1.5 rounded-lg transition-colors">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => handleToggleInvitePermission(p.key)}
+                            className="mt-0.5 w-3.5 h-3.5 text-brand-600 rounded border-slate-300 focus:ring-brand-500"
+                          />
+                          <div>
+                            <span className="font-semibold text-slate-800 block text-[11px]">{p.label}</span>
+                            <span className="text-slate-500 text-[10px] leading-tight block">{p.description}</span>
+                          </div>
+                        </label>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              <div className="pt-2 flex items-center justify-end gap-2">
+              {/* Actions Footer */}
+              <div className="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => setInviteModalOpen(false)}
@@ -756,7 +1015,140 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                   className="btn-primary text-xs py-2 px-4 flex items-center gap-2"
                 >
                   {inviteLoading && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
-                  <span>{inviteLoading ? 'Création en cours...' : 'Créer et activer le compte'}</span>
+                  <span>
+                    {inviteLoading
+                      ? (inviteMode === 'email' ? 'Envoi en cours...' : 'Création en cours...')
+                      : (inviteMode === 'email' ? 'Envoyer l\'invitation par email' : 'Créer et activer le compte')
+                    }
+                  </span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2 : OPTION 2 — MODIFIER LE PROFIL COLLABORATEUR */}
+      {editUserModalOpen && userToEdit && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-slate-100">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-brand-50 text-brand-600 flex items-center justify-center">
+                  <Edit2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-sm">Modifier le profil collaborateur</h3>
+                  <p className="text-[11px] text-slate-500 font-mono">{userToEdit.email}</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditUserModalOpen(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUserEdit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Nom et prénom <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Ex: Traoré Fatou"
+                  value={editFullName}
+                  onChange={(e) => setEditFullName(e.target.value)}
+                  className="input-field text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Rôle dans le catalogue
+                </label>
+                <select
+                  value={editRole}
+                  onChange={(e) => setEditRole(e.target.value as UserRole)}
+                  className="input-field text-xs"
+                >
+                  <option value="staff">Employé standard (consultation catalogue)</option>
+                  <option value="admin">Responsable / Administrateur commercial</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Statut du compte
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditIsActive(true)}
+                    className={`py-2 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 transition-colors ${
+                      editIsActive
+                        ? 'bg-emerald-50 border-emerald-300 text-emerald-800 font-semibold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                    <span>Actif</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditIsActive(false)}
+                    className={`py-2 px-3 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5 transition-colors ${
+                      !editIsActive
+                        ? 'bg-rose-50 border-rose-300 text-rose-800 font-semibold'
+                        : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                    }`}
+                  >
+                    <span className="w-2 h-2 rounded-full bg-rose-500"></span>
+                    <span>Désactivé</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editResetPermissions}
+                    onChange={(e) => setEditResetPermissions(e.target.checked)}
+                    className="mt-0.5 w-4 h-4 text-brand-600 rounded border-slate-300 focus:ring-brand-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-slate-800 block">
+                      Appliquer les permissions standard du rôle {editRole === 'admin' ? 'Responsable' : 'Employé'}
+                    </span>
+                    <span className="text-slate-500 text-[11px] leading-tight block mt-0.5">
+                      {editRole === 'admin'
+                        ? 'Accorde la consultation, modification, gestion des photos, tarifs gros/revendeur et imports.'
+                        : 'Accorde uniquement la consultation standard du catalogue.'}
+                    </span>
+                  </div>
+                </label>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditUserModalOpen(false)}
+                  className="btn-secondary text-xs py-2 px-3"
+                  disabled={isSavingEdit}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="btn-primary text-xs py-2 px-4 flex items-center gap-2"
+                >
+                  {isSavingEdit && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                  <span>{isSavingEdit ? 'Enregistrement...' : 'Enregistrer les modifications'}</span>
                 </button>
               </div>
             </form>

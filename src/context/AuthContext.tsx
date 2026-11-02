@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, PermissionKey } from '../types';
 import { MOCK_USERS } from '../lib/mockData';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { PRODUCTION_SITE_URL } from '../lib/constants';
 
 interface AuthContextType {
   currentUser: UserProfile | null;
@@ -155,9 +156,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           data: {
             full_name: fullName.trim(),
           },
-          emailRedirectTo: typeof window !== 'undefined' && window.location.origin.includes('workers.dev')
-            ? `${window.location.origin}/`
-            : 'https://gmi-catalogue.newton2-0-com.workers.dev/'
+          emailRedirectTo: PRODUCTION_SITE_URL
         }
       });
 

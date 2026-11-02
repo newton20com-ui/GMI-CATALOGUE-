@@ -103,7 +103,7 @@ serve(async (req: Request) => {
       );
     }
 
-    // ACTION : INVITATION PAR EMAIL
+    // ACTIONS : CRÉATION OU INVITATION
     if (!email || !email.includes('@')) {
       return new Response(
         JSON.stringify({ error: 'Adresse email invalide.' }),
@@ -116,31 +116,62 @@ serve(async (req: Request) => {
     const targetRole = role === 'admin' ? 'admin' : 'staff';
     const redirectUrl = 'https://gmi-catalogue.newton2-0-com.workers.dev/';
 
-    // 3. Envoyer l'email d'invitation avec lien magique via le module Admin de Supabase
-    const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
-      cleanEmail,
-      {
-        data: { full_name: cleanFullName },
-        redirectTo: redirectUrl,
-      }
-    );
+    let newUserId = '';
+    let emailSent = false;
+    let temporaryPassword = '';
 
-    if (inviteError) {
-      if (inviteError.message?.toLowerCase().includes('already registered')) {
+    if (action === 'create') {
+      // 3a. Création directe du compte avec mot de passe et email pré-confirmé (aucun email envoyé)
+      temporaryPassword = (body.password || '').trim() || `GMI-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}!`;
+      const { data: createData, error: createError } = await adminClient.auth.admin.createUser({
+        email: cleanEmail,
+        password: temporaryPassword,
+        email_confirm: true,
+        user_metadata: { full_name: cleanFullName },
+      });
+
+      if (createError) {
+        if (createError.message?.toLowerCase().includes('already registered')) {
+          return new Response(
+            JSON.stringify({ error: `Cette adresse email (${cleanEmail}) possède déjà un compte dans le système.` }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
         return new Response(
-          JSON.stringify({ error: `Cette adresse email (${cleanEmail}) possède déjà un compte dans le système.` }),
+          JSON.stringify({ error: `Erreur de création Supabase : ${createError.message}` }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-      return new Response(
-        JSON.stringify({ error: `Erreur d'invitation Supabase : ${inviteError.message}` }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      newUserId = createData.user?.id || '';
+      emailSent = false;
+    } else {
+      // 3b. Envoi de l'email d'invitation avec lien d'accès officiel vers l'URL Cloudflare de production
+      const { data: inviteData, error: inviteError } = await adminClient.auth.admin.inviteUserByEmail(
+        cleanEmail,
+        {
+          data: { full_name: cleanFullName },
+          redirectTo: redirectUrl,
+        }
       );
+
+      if (inviteError) {
+        if (inviteError.message?.toLowerCase().includes('already registered')) {
+          return new Response(
+            JSON.stringify({ error: `Cette adresse email (${cleanEmail}) possède déjà un compte dans le système.` }),
+            { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({ error: `Erreur d'invitation Supabase : ${inviteError.message}` }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+      newUserId = inviteData.user?.id || '';
+      emailSent = true;
     }
 
-    const newUserId = inviteData.user?.id;
     if (!newUserId) {
-      throw new Error('Identifiant utilisateur introuvable après l\'envoi de l\'invitation.');
+      throw new Error('Identifiant utilisateur introuvable après l\'opération.');
     }
 
     // 4. Créer ou mettre à jour la fiche profil dans user_profiles
@@ -173,12 +204,15 @@ serve(async (req: Request) => {
     return new Response(
       JSON.stringify({
         success: true,
-        emailSent: true,
+        emailSent,
         userId: newUserId,
         email: cleanEmail,
         fullName: cleanFullName,
         role: targetRole,
-        message: `Email d'invitation avec lien d'accès envoyé à ${cleanEmail}`,
+        temporaryPassword: temporaryPassword || undefined,
+        message: emailSent
+          ? `Email d'invitation avec lien officiel envoyé à ${cleanEmail}`
+          : `Compte activé avec succès pour ${cleanEmail}`,
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

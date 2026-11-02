@@ -23,5 +23,4 @@ dist-ssr
 .idea
 .DS_Store
 Thumbs.db
-redirect-server.cjs
-*.cjs
+
