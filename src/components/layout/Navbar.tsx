@@ -13,10 +13,12 @@ import {
   Layers,
   ChevronDown,
   Sparkles,
-  Smartphone
+  Smartphone,
+  Key
 } from 'lucide-react';
 import { MOCK_USERS } from '../../lib/mockData';
 import { usePwaInstall } from '../../hooks/usePwaInstall';
+import { PasswordModal } from '../auth/PasswordModal';
 
 interface NavbarProps {
   currentTab: 'catalog' | 'admin' | 'archived';
@@ -38,6 +40,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const { currentUser, logout, hasPermission, isSuperAdmin, switchMockUser, isDemoMode } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [userDropdownOpen, setUserDropdownOpen] = useState(false);
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false);
 
   const canCreate = hasPermission('product:create');
   const canImport = hasPermission('import:execute');
@@ -217,7 +220,18 @@ export const Navbar: React.FC<NavbarProps> = ({
                   </div>
                 )}
 
-                <div className="pt-1">
+                <div className="pt-1 border-t border-slate-100">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setUserDropdownOpen(false);
+                      setPasswordModalOpen(true);
+                    }}
+                    className="w-full text-left px-4 py-2 text-xs text-slate-700 hover:bg-slate-50 flex items-center gap-2 font-medium transition-colors"
+                  >
+                    <Key className="w-3.5 h-3.5 text-brand-600" />
+                    Changer mon mot de passe
+                  </button>
                   <button
                     onClick={() => logout()}
                     className="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 flex items-center gap-2 font-medium transition-colors"
@@ -312,18 +326,36 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
           )}
 
-          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-xs text-slate-500">Connecté: {currentUser?.email}</span>
+          <div className="pt-2 border-t border-slate-100 space-y-2">
             <button
-              onClick={() => logout()}
-              className="text-xs text-rose-600 font-medium hover:underline flex items-center gap-1"
+              onClick={() => {
+                setMobileMenuOpen(false);
+                setPasswordModalOpen(true);
+              }}
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Déconnexion
+              <Key className="w-4 h-4 text-brand-600" />
+              <span>Changer mon mot de passe</span>
             </button>
+            <div className="flex items-center justify-between px-1">
+              <span className="text-xs text-slate-500 truncate max-w-[200px]">Connecté: {currentUser?.email}</span>
+              <button
+                onClick={() => logout()}
+                className="text-xs text-rose-600 font-medium hover:underline flex items-center gap-1"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                Déconnexion
+              </button>
+            </div>
           </div>
         </div>
       )}
+
+      {/* Password Modal */}
+      <PasswordModal
+        isOpen={passwordModalOpen}
+        onClose={() => setPasswordModalOpen(false)}
+      />
     </header>
   );
 };

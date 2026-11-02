@@ -10,6 +10,10 @@ interface AuthContextType {
   login: (email: string, password?: string) => Promise<{ success: boolean; error?: string }>;
   signUp: (email: string, password: string, fullName: string) => Promise<{ success: boolean; error?: string; isFirstAdmin?: boolean }>;
   logout: () => Promise<void>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; error?: string }>;
+  resetPasswordEmail: (email: string) => Promise<{ success: boolean; error?: string }>;
+  isInviteSession: boolean;
+  clearInviteSession: () => void;
   hasPermission: (permission: PermissionKey) => boolean;
   isSuperAdmin: () => boolean;
   switchMockUser?: (userId: string) => void;
@@ -24,6 +28,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const isDemoMode = !isSupabaseConfigured;
+  const [isInviteSession, setIsInviteSession] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return (
+      window.location.hash.includes('type=invite') ||
+      window.location.hash.includes('type=recovery')
+    );
+  });
+
+  const clearInviteSession = () => {
+    setIsInviteSession(false);
+    if (typeof window !== 'undefined' && window.location.hash) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  };
 
   useEffect(() => {
     let unsubscribeAuth: (() => void) | undefined;
@@ -201,6 +219,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(null);
   };
 
+  const updatePassword = async (newPassword: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return { success: true };
+    }
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      clearInviteSession();
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || 'Erreur lors de la mise à jour du mot de passe.' };
+    }
+  };
+
+  const resetPasswordEmail = async (email: string): Promise<{ success: boolean; error?: string }> => {
+    if (!isSupabaseConfigured) {
+      return { success: true };
+    }
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), {
+        redirectTo: PRODUCTION_SITE_URL,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message || "Erreur lors de l'envoi de l'email de réinitialisation." };
+    }
+  };
+
   const switchMockUser = (userId: string) => {
     const user = MOCK_USERS.find(u => u.id === userId);
     if (user) {
@@ -227,6 +278,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         signUp,
         logout,
+        updatePassword,
+        resetPasswordEmail,
+        isInviteSession,
+        clearInviteSession,
         hasPermission,
         isSuperAdmin,
         switchMockUser,

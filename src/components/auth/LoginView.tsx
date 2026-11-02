@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { ShieldCheck, LogIn, Lock, Mail, AlertCircle, Info, Sparkles, UserPlus, CheckCircle } from 'lucide-react';
+import { ShieldCheck, LogIn, Lock, Mail, AlertCircle, Info, Sparkles, UserPlus, CheckCircle, Key, ArrowLeft } from 'lucide-react';
 import { MOCK_USERS } from '../../lib/mockData';
 import { isSupabaseConfigured } from '../../lib/supabase';
 
 export const LoginView: React.FC = () => {
-  const { login, signUp, isDemoMode } = useAuth();
+  const { login, signUp, isDemoMode, resetPasswordEmail } = useAuth();
   const isSetupRequested = typeof window !== 'undefined' && window.location.search.includes('setup=first-admin');
-  const [mode, setMode] = useState<'login' | 'signup'>(isSetupRequested ? 'signup' : 'login');
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>(isSetupRequested ? 'signup' : 'login');
   
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -24,6 +24,18 @@ export const LoginView: React.FC = () => {
 
     if (!email.trim()) {
       setErrorMsg('Veuillez renseigner votre adresse email.');
+      return;
+    }
+
+    if (mode === 'forgot') {
+      setLoading(true);
+      const res = await resetPasswordEmail(email);
+      setLoading(false);
+      if (res.success) {
+        setSuccessMsg(`Un lien sécurisé de réinitialisation a été envoyé à ${email.trim()}. Vérifiez votre boîte de réception.`);
+      } else {
+        setErrorMsg(res.error || "Impossible d'envoyer l'email de réinitialisation.");
+      }
       return;
     }
 
@@ -97,7 +109,17 @@ export const LoginView: React.FC = () => {
         <div className="bg-white py-8 px-6 sm:px-10 shadow-modal rounded-2xl border border-slate-100">
           
           {/* Tabs or Title */}
-          {isSetupRequested ? (
+          {mode === 'forgot' ? (
+            <div className="mb-6 text-center border-b border-slate-100 pb-4">
+              <h2 className="text-lg font-bold text-slate-800 flex items-center justify-center gap-2">
+                <Key className="w-5 h-5 text-brand-600" />
+                Mot de passe oublié
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Recevez un lien sécurisé par email pour définir votre nouveau mot de passe
+              </p>
+            </div>
+          ) : isSetupRequested ? (
             <div className="flex border-b border-slate-100 mb-6">
               <button
                 onClick={() => { setMode('login'); setErrorMsg(''); setSuccessMsg(''); }}
@@ -180,23 +202,36 @@ export const LoginView: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Mot de passe {mode === 'signup' && '(min. 6 caractères)'}
-              </label>
-              <div className="relative">
-                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="••••••••"
-                  required
-                  minLength={mode === 'signup' ? 6 : undefined}
-                  className="input-field pl-10"
-                />
+            {mode !== 'forgot' && (
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 mb-1">
+                  Mot de passe {mode === 'signup' && '(min. 6 caractères)'}
+                </label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    minLength={mode === 'signup' ? 6 : undefined}
+                    className="input-field pl-10"
+                  />
+                </div>
+                {mode === 'login' && (
+                  <div className="flex items-center justify-end mt-1.5">
+                    <button
+                      type="button"
+                      onClick={() => { setMode('forgot'); setErrorMsg(''); setSuccessMsg(''); }}
+                      className="text-xs text-brand-600 hover:text-brand-700 font-medium"
+                    >
+                      Mot de passe oublié ?
+                    </button>
+                  </div>
+                )}
               </div>
-            </div>
+            )}
 
             <button
               type="submit"
@@ -206,15 +241,30 @@ export const LoginView: React.FC = () => {
               {loading ? (
                 <span className="flex items-center gap-2">
                   <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  {mode === 'signup' ? 'Création...' : 'Connexion...'}
+                  {mode === 'forgot' ? 'Envoi...' : mode === 'signup' ? 'Création...' : 'Connexion...'}
                 </span>
               ) : (
                 <span className="flex items-center gap-2">
-                  {mode === 'signup' ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
-                  {mode === 'signup' ? 'Initialiser le compte Administrateur' : 'Se connecter au catalogue'}
+                  {mode === 'forgot' ? <Key className="w-4 h-4" /> : mode === 'signup' ? <UserPlus className="w-4 h-4" /> : <LogIn className="w-4 h-4" />}
+                  {mode === 'forgot'
+                    ? 'Envoyer le lien de réinitialisation'
+                    : mode === 'signup'
+                    ? 'Initialiser le compte Administrateur'
+                    : 'Se connecter au catalogue'}
                 </span>
               )}
             </button>
+
+            {mode === 'forgot' && (
+              <button
+                type="button"
+                onClick={() => { setMode('login'); setErrorMsg(''); setSuccessMsg(''); }}
+                className="w-full text-center text-xs text-slate-500 hover:text-slate-800 font-medium flex items-center justify-center gap-1.5 pt-2"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" />
+                <span>Retour à la connexion</span>
+              </button>
+            )}
           </form>
 
           {/* Quick Login Profiles for local testing */}

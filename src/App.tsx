@@ -8,11 +8,12 @@ import { ProductFormModal } from './components/catalog/ProductFormModal';
 import { ImportModal } from './components/import/ImportModal';
 import { AdminView } from './components/admin/AdminView';
 import { LoginView } from './components/auth/LoginView';
+import { PasswordModal } from './components/auth/PasswordModal';
 import { Product, Category, ProductStatus } from './types';
 import { catalogService } from './services/catalogService';
 
 const MainApplication: React.FC = () => {
-  const { currentUser, loading: authLoading, hasPermission, isSuperAdmin } = useAuth();
+  const { currentUser, loading: authLoading, hasPermission, isSuperAdmin, isInviteSession, clearInviteSession } = useAuth();
 
   // Navigation
   const [currentTab, setCurrentTab] = useState<'catalog' | 'admin' | 'archived'>('catalog');
@@ -181,6 +182,15 @@ const MainApplication: React.FC = () => {
           onClose={() => setImportModalOpen(false)}
           onSuccess={() => { loadData(); }}
           userId={currentUser.id}
+        />
+      )}
+
+      {/* Modale d'accueil pour premier mot de passe (Arrivée via invitation par email) */}
+      {isInviteSession && (
+        <PasswordModal
+          isOpen={isInviteSession}
+          onClose={clearInviteSession}
+          isInitialSetup={true}
         />
       )}
 
