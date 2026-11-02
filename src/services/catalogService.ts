@@ -1,6 +1,6 @@
 import { Product, ProductStatus, ProductPrice, ProductImage, ProductVariant, ProductPackage, Category, PermissionKey } from '../types';
 import { INITIAL_PRODUCTS, MOCK_CATEGORIES } from '../lib/mockData';
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, ensureFreshSession } from '../lib/supabase';
 
 const PRODUCTS_STORAGE_KEY = 'gmi_catalog_products_v1';
 const CATEGORIES_STORAGE_KEY = 'gmi_catalog_categories_v1';
@@ -363,6 +363,7 @@ export const catalogService = {
     };
 
     if (isSupabaseConfigured) {
+      await ensureFreshSession();
       // Insertion dans Supabase avec transaction ou cascade
       const { data: insertedProduct, error: prodErr } = await supabase
         .from('products')
@@ -434,6 +435,7 @@ export const catalogService = {
   // Mettre à jour un produit
   async updateProduct(id: string, updates: Partial<Product>, prices?: Record<string, number>, userId?: string): Promise<Product> {
     if (isSupabaseConfigured) {
+      await ensureFreshSession();
       const { data, error } = await supabase
         .from('products')
         .update({
@@ -522,6 +524,7 @@ export const catalogService = {
   // Archiver un produit
   async archiveProduct(id: string, userId?: string): Promise<void> {
     if (isSupabaseConfigured) {
+      await ensureFreshSession();
       const { error } = await supabase
         .from('products')
         .update({ status: 'archive', updated_at: new Date().toISOString(), updated_by: userId })
@@ -573,6 +576,7 @@ export const catalogService = {
     let publicUrl = '';
 
     if (isSupabaseConfigured && file instanceof File) {
+      await ensureFreshSession();
       const ext = file.name.split('.').pop() || 'jpg';
       const storagePath = `products/${productId}/${imageId}.${ext}`;
 
@@ -741,11 +745,7 @@ export const catalogService = {
 
     let currentProducts: any[] = [];
     if (isSupabaseConfigured) {
-      try {
-        await supabase.auth.refreshSession();
-      } catch {
-        // Ignorer si la session est déjà valide
-      }
+      await ensureFreshSession();
       const { data } = await supabase.from('products').select('id, internal_code, legacy_reference, name');
       currentProducts = data || [];
     } else {

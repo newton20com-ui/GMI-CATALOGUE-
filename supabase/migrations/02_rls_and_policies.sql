@@ -254,6 +254,15 @@ WITH CHECK (
     )
 );
 
+-- Insertion de profils: Autorisé pour les gestionnaires ou le super_admin
+CREATE POLICY "User profiles insertable by authorized managers"
+ON public.user_profiles FOR INSERT
+WITH CHECK (
+    public.has_permission('user:manage')
+    OR public.is_super_admin()
+);
+
+
 -- =============================================================================
 -- POLITIQUES RLS: PERMISSIONS
 -- =============================================================================

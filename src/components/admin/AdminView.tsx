@@ -20,7 +20,10 @@ import {
   Trash2, 
   Plus, 
   RotateCcw,
-  Sparkles
+  Sparkles,
+  Key,
+  Copy,
+  RefreshCw
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -53,6 +56,25 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteFullName, setInviteFullName] = useState('');
   const [inviteRole, setInviteRole] = useState<UserRole>('staff');
+  const [invitePassword, setInvitePassword] = useState('');
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [createdCredentials, setCreatedCredentials] = useState<{
+    fullName: string;
+    email: string;
+    password: string;
+    role: string;
+  } | null>(null);
+  const [copiedPass, setCopiedPass] = useState(false);
+
+  const generateRandomPassword = () => `GMI-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}!`;
+
+  const handleOpenInviteModal = () => {
+    setInviteEmail('');
+    setInviteFullName('');
+    setInviteRole('staff');
+    setInvitePassword(generateRandomPassword());
+    setInviteModalOpen(true);
+  };
 
   const isSuperAdmin = currentUser.role === 'super_admin';
 
@@ -123,6 +145,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
+    setInviteLoading(true);
 
     try {
       const defaultPerms: PermissionKey[] = ['catalog:view'];
@@ -130,14 +153,26 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
         defaultPerms.push('product:create', 'product:edit', 'photo:manage', 'price:view:gros', 'price:view:revendeur', 'import:execute');
       }
 
-      await adminService.inviteUser(inviteEmail, inviteFullName, inviteRole, defaultPerms);
+      const pwd = invitePassword.trim() || generateRandomPassword();
+      const res = await adminService.inviteUser(inviteEmail, inviteFullName, inviteRole, defaultPerms, pwd);
+
+      setCreatedCredentials({
+        fullName: inviteFullName,
+        email: inviteEmail.trim().toLowerCase(),
+        password: res.temporaryPassword,
+        role: inviteRole,
+      });
+
       setSuccessMsg(`Compte créé avec succès pour ${inviteFullName} (${inviteEmail}).`);
       setInviteModalOpen(false);
       setInviteEmail('');
       setInviteFullName('');
+      setInvitePassword('');
       loadData();
     } catch (err: any) {
       setErrorMsg(err.message || 'Erreur lors de la création du compte.');
+    } finally {
+      setInviteLoading(false);
     }
   };
 
@@ -216,7 +251,7 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
 
         {activeTab === 'users' && (
           <button
-            onClick={() => setInviteModalOpen(true)}
+            onClick={handleOpenInviteModal}
             className="btn-primary text-xs py-2 px-4 gap-2 self-start sm:self-auto"
           >
             <UserPlus className="w-4 h-4" />
@@ -572,7 +607,11 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                 <UserPlus className="w-4 h-4 text-brand-600" />
                 Inviter un nouvel employé
               </h3>
-              <button onClick={() => setInviteModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+              <button 
+                type="button"
+                onClick={() => setInviteModalOpen(false)} 
+                className="text-slate-400 hover:text-slate-600"
+              >
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -620,19 +659,115 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                 </select>
               </div>
 
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-xs font-semibold text-slate-700">
+                    Mot de passe initial provisoire <span className="text-rose-500">*</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setInvitePassword(generateRandomPassword())}
+                    className="text-[11px] text-brand-600 hover:text-brand-700 font-medium flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Générer
+                  </button>
+                </div>
+                <div className="relative">
+                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    required
+                    placeholder="Ex: GMI-2026-8921!"
+                    value={invitePassword}
+                    onChange={(e) => setInvitePassword(e.target.value)}
+                    className="input-field text-xs pl-9 font-mono"
+                  />
+                </div>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  Le collaborateur pourra se connecter dès maintenant avec cet email et ce mot de passe.
+                </p>
+              </div>
+
               <div className="pt-2 flex items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setInviteModalOpen(false)}
                   className="btn-secondary text-xs py-2 px-3"
+                  disabled={inviteLoading}
                 >
                   Annuler
                 </button>
-                <button type="submit" className="btn-primary text-xs py-2 px-4">
-                  Créer et envoyer les accès
+                <button 
+                  type="submit" 
+                  disabled={inviteLoading}
+                  className="btn-primary text-xs py-2 px-4 flex items-center gap-2"
+                >
+                  {inviteLoading && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                  <span>{inviteLoading ? 'Création en cours...' : 'Créer et activer le compte'}</span>
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal identifiants créés avec succès */}
+      {createdCredentials && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Compte créé avec succès</h3>
+                <p className="text-xs text-slate-500">Transmettez ces identifiants au collaborateur</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
+              <div>
+                <span className="text-slate-500 font-medium">Nom complet :</span>
+                <span className="ml-2 font-semibold text-slate-800">{createdCredentials.fullName}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 font-medium">Identifiant (Email) :</span>
+                <span className="ml-2 font-semibold text-slate-800 font-mono">{createdCredentials.email}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 font-medium">Mot de passe temporaire :</span>
+                <div className="mt-1 flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200">
+                  <span className="font-mono font-bold text-brand-700 tracking-wide text-sm">{createdCredentials.password}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(`Email: ${createdCredentials.email}\nMot de passe: ${createdCredentials.password}`);
+                      setCopiedPass(true);
+                      setTimeout(() => setCopiedPass(false), 2500);
+                    }}
+                    className="text-xs text-brand-600 hover:text-brand-700 font-semibold flex items-center gap-1 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-md transition-colors"
+                  >
+                    {copiedPass ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                    <span>{copiedPass ? 'Copié !' : 'Copier'}</span>
+                  </button>
+                </div>
+              </div>
+              <div>
+                <span className="text-slate-500 font-medium">Rôle attribué :</span>
+                <span className="ml-2 font-semibold text-slate-800 capitalize">{createdCredentials.role === 'admin' ? 'Responsable' : 'Employé Standard'}</span>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <button
+                type="button"
+                onClick={() => setCreatedCredentials(null)}
+                className="w-full btn-primary py-2 text-xs font-semibold"
+              >
+                Terminer
+              </button>
+            </div>
           </div>
         </div>
       )}
