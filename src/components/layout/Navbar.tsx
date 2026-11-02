@@ -12,9 +12,11 @@ import {
   Search,
   Layers,
   ChevronDown,
-  Sparkles
+  Sparkles,
+  Smartphone
 } from 'lucide-react';
 import { MOCK_USERS } from '../../lib/mockData';
+import { usePwaInstall } from '../../hooks/usePwaInstall';
 
 interface NavbarProps {
   currentTab: 'catalog' | 'admin' | 'archived';
@@ -40,6 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   const canCreate = hasPermission('product:create');
   const canImport = hasPermission('import:execute');
   const canAdmin = hasPermission('user:manage') || isSuperAdmin();
+  const { isInstallable, triggerInstall } = usePwaInstall();
 
   return (
     <header className="sticky top-0 z-40 bg-white border-b border-slate-200/80 shadow-subtle backdrop-blur-md bg-white/95">
@@ -133,6 +136,18 @@ export const Navbar: React.FC<NavbarProps> = ({
               >
                 <ShieldCheck className="w-4 h-4" />
                 Administration
+              </button>
+            )}
+
+            {isInstallable && (
+              <button
+                type="button"
+                onClick={triggerInstall}
+                title="Installer l'application GMI sur votre ordinateur ou appareil"
+                className="px-2.5 py-2 rounded-lg text-xs font-semibold text-brand-700 bg-brand-50 hover:bg-brand-100 border border-brand-200/80 flex items-center gap-1.5 transition-colors shadow-sm"
+              >
+                <Smartphone className="w-3.5 h-3.5 text-brand-600" />
+                <span>Installer l'app</span>
               </button>
             )}
           </div>
@@ -283,6 +298,17 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               <ShieldCheck className="w-5 h-5 text-emerald-600" />
               Administration & Droits
+            </button>
+          )}
+
+          {isInstallable && (
+            <button
+              type="button"
+              onClick={() => { triggerInstall(); setMobileMenuOpen(false); }}
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-semibold text-brand-800 bg-brand-50 hover:bg-brand-100 border border-brand-200/60"
+            >
+              <Smartphone className="w-5 h-5 text-brand-600" />
+              Installer l'application GMI sur mon appareil
             </button>
           )}
 

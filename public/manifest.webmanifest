@@ -1,0 +1,33 @@
+{
+  "name": "Catalogue GMI — Général Matériel d'Imprimerie",
+  "short_name": "Catalogue GMI",
+  "description": "Application officielle de consultation et gestion du catalogue de marchandises pour Général Matériel d'Imprimerie et de Sérigraphie (Burkina Faso).",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#ffffff",
+  "theme_color": "#0284c7",
+  "lang": "fr",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

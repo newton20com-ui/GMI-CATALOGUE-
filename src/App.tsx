@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Navbar } from './components/layout/Navbar';
+import { PwaInstallBanner } from './components/layout/PwaInstallBanner';
 import { CatalogView } from './components/catalog/CatalogView';
 import { ProductDetailModal } from './components/catalog/ProductDetailModal';
 import { ProductFormModal } from './components/catalog/ProductFormModal';
@@ -107,6 +108,9 @@ const MainApplication: React.FC = () => {
         searchQuery={searchQuery}
         setSearchQuery={setSearchQuery}
       />
+
+      {/* PWA Install Notification Banner */}
+      <PwaInstallBanner />
 
       {/* Main Content Area */}
       <main className="flex-1">
