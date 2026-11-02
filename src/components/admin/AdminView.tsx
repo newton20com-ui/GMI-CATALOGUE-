@@ -23,7 +23,8 @@ import {
   Sparkles,
   Key,
   Copy,
-  RefreshCw
+  RefreshCw,
+  MailCheck
 } from 'lucide-react';
 
 interface AdminViewProps {
@@ -61,8 +62,9 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
   const [createdCredentials, setCreatedCredentials] = useState<{
     fullName: string;
     email: string;
-    password: string;
+    password?: string;
     role: string;
+    emailSent: boolean;
   } | null>(null);
   const [copiedPass, setCopiedPass] = useState(false);
 
@@ -161,9 +163,14 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
         email: inviteEmail.trim().toLowerCase(),
         password: res.temporaryPassword,
         role: inviteRole,
+        emailSent: Boolean(res.emailSent),
       });
 
-      setSuccessMsg(`Compte créé avec succès pour ${inviteFullName} (${inviteEmail}).`);
+      if (res.emailSent) {
+        setSuccessMsg(`Email officiel d'invitation avec lien sécurisé envoyé à ${inviteFullName} (${inviteEmail}).`);
+      } else {
+        setSuccessMsg(`Compte créé avec succès pour ${inviteFullName} (${inviteEmail}).`);
+      }
       setInviteModalOpen(false);
       setInviteEmail('');
       setInviteFullName('');
@@ -712,52 +719,92 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
         </div>
       )}
 
-      {/* Modal identifiants créés avec succès */}
+      {/* Modal confirmation : Email envoyé OU Identifiants générés */}
       {createdCredentials && (
         <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95">
-            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
-                <CheckCircle className="w-6 h-6" />
-              </div>
-              <div>
-                <h3 className="font-bold text-slate-900 text-sm">Compte créé avec succès</h3>
-                <p className="text-xs text-slate-500">Transmettez ces identifiants au collaborateur</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
-              <div>
-                <span className="text-slate-500 font-medium">Nom complet :</span>
-                <span className="ml-2 font-semibold text-slate-800">{createdCredentials.fullName}</span>
-              </div>
-              <div>
-                <span className="text-slate-500 font-medium">Identifiant (Email) :</span>
-                <span className="ml-2 font-semibold text-slate-800 font-mono">{createdCredentials.email}</span>
-              </div>
-              <div>
-                <span className="text-slate-500 font-medium">Mot de passe temporaire :</span>
-                <div className="mt-1 flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200">
-                  <span className="font-mono font-bold text-brand-700 tracking-wide text-sm">{createdCredentials.password}</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      navigator.clipboard.writeText(`Email: ${createdCredentials.email}\nMot de passe: ${createdCredentials.password}`);
-                      setCopiedPass(true);
-                      setTimeout(() => setCopiedPass(false), 2500);
-                    }}
-                    className="text-xs text-brand-600 hover:text-brand-700 font-semibold flex items-center gap-1 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-md transition-colors"
-                  >
-                    {copiedPass ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                    <span>{copiedPass ? 'Copié !' : 'Copier'}</span>
-                  </button>
+            {createdCredentials.emailSent ? (
+              // Cas 1 : Email officiel envoyé automatiquement
+              <>
+                <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                    <MailCheck className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Invitation envoyée par email !</h3>
+                    <p className="text-xs text-slate-500">Un lien cliquable a été envoyé au collaborateur</p>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <span className="text-slate-500 font-medium">Rôle attribué :</span>
-                <span className="ml-2 font-semibold text-slate-800 capitalize">{createdCredentials.role === 'admin' ? 'Responsable' : 'Employé Standard'}</span>
-              </div>
-            </div>
+
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
+                  <div>
+                    <span className="text-slate-500 font-medium">Destinataire :</span>
+                    <span className="ml-2 font-semibold text-slate-800">{createdCredentials.fullName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-medium">Adresse email :</span>
+                    <span className="ml-2 font-semibold text-slate-800 font-mono">{createdCredentials.email}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-medium">Rôle attribué :</span>
+                    <span className="ml-2 font-semibold text-slate-800 capitalize">{createdCredentials.role === 'admin' ? 'Responsable' : 'Employé Standard'}</span>
+                  </div>
+                  <div className="pt-2 border-t border-slate-200/60 text-slate-600">
+                    <p className="leading-relaxed">
+                      Le collaborateur recevra un email officiel GMI. Il lui suffira de <strong>cliquer sur le bouton d'invitation</strong> pour activer son compte et choisir son propre mot de passe.
+                    </p>
+                  </div>
+                </div>
+              </>
+            ) : (
+              // Cas 2 : Mode de secours avec identifiants et mot de passe provisoire
+              <>
+                <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center flex-shrink-0">
+                    <CheckCircle className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h3 className="font-bold text-slate-900 text-sm">Compte créé avec succès</h3>
+                    <p className="text-xs text-slate-500">Transmettez ces identifiants au collaborateur</p>
+                  </div>
+                </div>
+
+                <div className="bg-slate-50 border border-slate-200/80 rounded-xl p-4 space-y-2.5 text-xs">
+                  <div>
+                    <span className="text-slate-500 font-medium">Nom complet :</span>
+                    <span className="ml-2 font-semibold text-slate-800">{createdCredentials.fullName}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-medium">Identifiant (Email) :</span>
+                    <span className="ml-2 font-semibold text-slate-800 font-mono">{createdCredentials.email}</span>
+                  </div>
+                  {createdCredentials.password && (
+                    <div>
+                      <span className="text-slate-500 font-medium">Mot de passe temporaire :</span>
+                      <div className="mt-1 flex items-center justify-between bg-white px-3 py-2 rounded-lg border border-slate-200">
+                        <span className="font-mono font-bold text-brand-700 tracking-wide text-sm">{createdCredentials.password}</span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            navigator.clipboard.writeText(`Email: ${createdCredentials.email}\nMot de passe: ${createdCredentials.password}`);
+                            setCopiedPass(true);
+                            setTimeout(() => setCopiedPass(false), 2500);
+                          }}
+                          className="text-xs text-brand-600 hover:text-brand-700 font-semibold flex items-center gap-1 bg-brand-50 hover:bg-brand-100 px-2.5 py-1 rounded-md transition-colors"
+                        >
+                          {copiedPass ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          <span>{copiedPass ? 'Copié !' : 'Copier'}</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <span className="text-slate-500 font-medium">Rôle attribué :</span>
+                    <span className="ml-2 font-semibold text-slate-800 capitalize">{createdCredentials.role === 'admin' ? 'Responsable' : 'Employé Standard'}</span>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="mt-5">
               <button

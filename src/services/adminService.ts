@@ -136,7 +136,7 @@ export const adminService = {
     role: UserRole,
     initialPermissions: PermissionKey[],
     customPassword?: string
-  ): Promise<{ profile: UserProfile; temporaryPassword: string }> {
+  ): Promise<{ profile: UserProfile; emailSent: boolean; temporaryPassword?: string }> {
     const cleanEmail = email.trim().toLowerCase();
     const cleanFullName = fullName.trim();
     const temporaryPassword = customPassword && customPassword.trim().length >= 6
@@ -160,7 +160,46 @@ export const adminService = {
         throw new Error(`Un collaborateur avec l'adresse ${cleanEmail} existe déjà dans le catalogue.`);
       }
 
-      // 1. Créer le compte utilisateur dans Supabase auth.users via un client isolé
+      // 1. Tenter l'envoi de l'invitation par email automatique via Supabase Edge Function (Option B)
+      try {
+        const { data: edgeData, error: edgeError } = await supabase.functions.invoke('invite-user', {
+          body: {
+            email: cleanEmail,
+            fullName: cleanFullName,
+            role,
+            permissions: initialPermissions,
+          },
+        });
+
+        if (!edgeError && edgeData?.success) {
+          const finalProfile: UserProfile = {
+            id: edgeData.userId || `user-${Date.now()}`,
+            email: cleanEmail,
+            full_name: cleanFullName,
+            role,
+            is_active: true,
+            is_protected: false,
+            permissions: initialPermissions,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          };
+          return {
+            profile: finalProfile,
+            emailSent: true,
+          };
+        }
+
+        if (edgeData?.error && edgeData.error.includes('déjà un compte')) {
+          throw new Error(edgeData.error);
+        }
+      } catch (edgeErr: any) {
+        if (edgeErr?.message && edgeErr.message.includes('déjà un compte')) {
+          throw edgeErr;
+        }
+        console.info('Edge function invite-user non déployée ou indisponible, utilisation du mode de secours:', edgeErr?.message);
+      }
+
+      // 2. Mode de secours direct : Créer le compte utilisateur dans Supabase auth.users via un client isolé
       // afin de ne pas toucher au jeton de l'administrateur connecté.
       const isolatedAuth = createIsolatedAuthClient();
       const { data: authData, error: authError } = await isolatedAuth.auth.signUp({
@@ -264,6 +303,7 @@ export const adminService = {
 
       return {
         profile: finalProfile,
+        emailSent: false,
         temporaryPassword,
       };
     } else {
@@ -286,7 +326,7 @@ export const adminService = {
       };
 
       saveLocalUsers([...users, newUser]);
-      return { profile: newUser, temporaryPassword };
+      return { profile: newUser, emailSent: false, temporaryPassword };
     }
   },
 
