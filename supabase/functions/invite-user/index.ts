@@ -1,5 +1,5 @@
 // Supabase Edge Function : invite-user
-// Permet à un administrateur du Catalogue GMI d'inviter un collaborateur par email officiel avec lien sécurisé
+// Permet à un administrateur du Catalogue GMI d'inviter ou de supprimer définitivement un collaborateur
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -58,15 +58,52 @@ serve(async (req: Request) => {
 
     if (profileErr || !callerProfile || !callerProfile.is_active || (callerProfile.role !== 'super_admin' && callerProfile.role !== 'admin')) {
       return new Response(
-        JSON.stringify({ error: 'Accès refusé : Seuls les administrateurs peuvent inviter des utilisateurs.' }),
+        JSON.stringify({ error: 'Accès refusé : Seuls les administrateurs peuvent gérer les utilisateurs.' }),
         { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // 2. Récupérer les paramètres de l'invitation
+    // 2. Récupérer les paramètres
     const body = await req.json();
-    const { email, fullName, role, permissions } = body;
+    const { action, userId, email, fullName, role, permissions } = body;
 
+    // ACTION : SUPPRESSION DÉFINITIVE D'UN UTILISATEUR
+    if (action === 'delete') {
+      if (!userId) {
+        return new Response(
+          JSON.stringify({ error: 'Identifiant userId manquant pour la suppression.' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Vérifier que la cible n'est pas le Super Admin protégé
+      const { data: targetProfile } = await adminClient
+        .from('user_profiles')
+        .select('is_protected, email')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (targetProfile?.is_protected) {
+        return new Response(
+          JSON.stringify({ error: 'Sécurité : Le compte Administrateur Principal protégé ne peut pas être supprimé.' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // 1. Supprimer l'utilisateur de auth.users (libère l'email pour une réinvitation future)
+      await adminClient.auth.admin.deleteUser(userId);
+
+      // 2. Supprimer de user_profiles et user_permissions
+      await adminClient.from('user_permissions').delete().eq('user_id', userId);
+      await adminClient.from('user_profiles').delete().eq('id', userId);
+
+      return new Response(
+        JSON.stringify({ success: true, message: 'Utilisateur supprimé définitivement.' }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ACTION : INVITATION PAR EMAIL
     if (!email || !email.includes('@')) {
       return new Response(
         JSON.stringify({ error: 'Adresse email invalide.' }),
@@ -89,7 +126,6 @@ serve(async (req: Request) => {
     );
 
     if (inviteError) {
-      // Si l'utilisateur est déjà inscrit
       if (inviteError.message?.toLowerCase().includes('already registered')) {
         return new Response(
           JSON.stringify({ error: `Cette adresse email (${cleanEmail}) possède déjà un compte dans le système.` }),
@@ -149,7 +185,7 @@ serve(async (req: Request) => {
 
   } catch (err: any) {
     return new Response(
-      JSON.stringify({ error: err.message || 'Erreur interne du serveur lors de l\'invitation.' }),
+      JSON.stringify({ error: err.message || 'Erreur interne du serveur.' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }

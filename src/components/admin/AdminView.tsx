@@ -67,6 +67,8 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
     emailSent: boolean;
   } | null>(null);
   const [copiedPass, setCopiedPass] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+  const [isDeletingUser, setIsDeletingUser] = useState(false);
 
   const generateRandomPassword = () => `GMI-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}!`;
 
@@ -120,6 +122,27 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
       loadData();
     } catch (err: any) {
       setErrorMsg(err.message || 'Erreur lors de la modification.');
+    }
+  };
+
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+    setIsDeletingUser(true);
+    setErrorMsg('');
+    setSuccessMsg('');
+
+    try {
+      await adminService.deleteUser(userToDelete.id);
+      setSuccessMsg(`L'utilisateur ${userToDelete.full_name} (${userToDelete.email}) a été supprimé définitivement. Son adresse email est de nouveau disponible.`);
+      if (selectedUser?.id === userToDelete.id) {
+        setSelectedUser(null);
+      }
+      setUserToDelete(null);
+      loadData();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erreur lors de la suppression de l\'utilisateur.');
+    } finally {
+      setIsDeletingUser(false);
     }
   };
 
@@ -362,22 +385,34 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
                       {!u.is_protected && (
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleToggleUserActive(u);
-                          }}
-                          className={`p-1.5 rounded text-xs ${
-                            u.is_active
-                              ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
-                              : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
-                          }`}
-                          title={u.is_active ? 'Désactiver ce compte' : 'Activer ce compte'}
-                        >
-                          {u.is_active ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
-                        </button>
+                        <>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleToggleUserActive(u);
+                            }}
+                            className={`p-1.5 rounded text-xs transition-colors ${
+                              u.is_active
+                                ? 'text-slate-400 hover:text-rose-600 hover:bg-rose-50'
+                                : 'text-slate-400 hover:text-emerald-600 hover:bg-emerald-50'
+                            }`}
+                            title={u.is_active ? 'Désactiver ce compte' : 'Activer ce compte'}
+                          >
+                            {u.is_active ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setUserToDelete(u);
+                            }}
+                            className="p-1.5 rounded text-xs text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors"
+                            title="Supprimer définitivement cet utilisateur"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -397,10 +432,20 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                     </h3>
                     <p className="text-xs text-slate-500 font-mono mt-0.5">{selectedUser.email}</p>
                   </div>
-                  {selectedUser.is_protected && (
+                  {selectedUser.is_protected ? (
                     <span className="text-xs font-semibold text-purple-700 bg-purple-50 border border-purple-200 px-2.5 py-1 rounded-lg">
                       Accès total inaltérable
                     </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setUserToDelete(selectedUser)}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200/80 flex items-center gap-1.5 transition-colors"
+                      title="Supprimer définitivement cet utilisateur"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Supprimer le compte</span>
+                    </button>
                   )}
                 </div>
 
@@ -813,6 +858,52 @@ export const AdminView: React.FC<AdminViewProps> = ({ onSelectProduct, currentUs
                 className="w-full btn-primary py-2 text-xs font-semibold"
               >
                 Terminer
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal confirmation de suppression définitive d'un utilisateur */}
+      {userToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-modal border border-slate-200 animate-in fade-in zoom-in-95">
+            <div className="flex items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+              <div className="w-10 h-10 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center flex-shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm">Supprimer définitivement l'utilisateur ?</h3>
+                <p className="text-xs text-slate-500">Cette action est irréversible</p>
+              </div>
+            </div>
+
+            <div className="text-xs text-slate-600 space-y-2.5 mb-5">
+              <p>
+                Êtes-vous certain de vouloir supprimer le compte de <strong>{userToDelete.full_name}</strong> (<code className="font-mono">{userToDelete.email}</code>) ?
+              </p>
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] leading-relaxed">
+                Son compte et tous ses accès seront révoqués. Son adresse email sera <strong>immédiatement libérée</strong> et vous pourrez le réinviter proprement avec le nouveau système d'invitation par email si vous le souhaitez.
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setUserToDelete(null)}
+                className="btn-secondary text-xs py-2 px-3"
+                disabled={isDeletingUser}
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteUser}
+                disabled={isDeletingUser}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+              >
+                {isDeletingUser && <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                <span>{isDeletingUser ? 'Suppression en cours...' : 'Confirmer la suppression'}</span>
               </button>
             </div>
           </div>

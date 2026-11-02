@@ -129,6 +129,41 @@ export const adminService = {
     }
   },
 
+  // Supprimer définitivement un utilisateur
+  async deleteUser(userId: string): Promise<void> {
+    const users = getLocalUsers();
+    const user = users.find(u => u.id === userId);
+
+    if (user?.is_protected) {
+      throw new Error('Sécurité : Le compte de l\'Administrateur Principal protégé ne peut pas être supprimé.');
+    }
+
+    if (isSupabaseConfigured) {
+      await ensureFreshSession();
+
+      // 1. Tenter la suppression via l'Edge Function pour supprimer également de auth.users (libère l'email)
+      try {
+        const { data, error } = await supabase.functions.invoke('invite-user', {
+          body: { action: 'delete', userId },
+        });
+
+        if (!error && data?.success) {
+          return;
+        }
+      } catch (edgeErr) {
+        console.warn('Edge function delete non disponible, suppression directe profile:', edgeErr);
+      }
+
+      // 2. Supprimer de user_permissions et user_profiles
+      await supabase.from('user_permissions').delete().eq('user_id', userId);
+      const { error: profileErr } = await supabase.from('user_profiles').delete().eq('id', userId);
+      if (profileErr) throw profileErr;
+    } else {
+      const remainingUsers = users.filter(u => u.id !== userId);
+      saveLocalUsers(remainingUsers);
+    }
+  },
+
   // Créer / Inviter directement un nouvel utilisateur avec gestion sécurisée de session
   async inviteUser(
     email: string,
