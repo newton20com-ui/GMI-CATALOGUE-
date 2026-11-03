@@ -183,16 +183,19 @@ export const catalogService = {
     }));
   },
 
-  // Récupérer un produit par son ID
+  // Récupérer un produit par son ID ou son code interne (ex: GMI-IMP-001)
   async getProductById(
-    id: string,
+    idOrCode: string,
     hasPermission: (perm: PermissionKey) => boolean,
     isSuperAdmin: boolean
   ): Promise<Product | null> {
+    if (!idOrCode) return null;
     let product: Product | null = null;
+    const cleanLookup = idOrCode.trim();
 
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanLookup);
+      let query = supabase
         .from('products')
         .select(`
           *,
@@ -201,9 +204,34 @@ export const catalogService = {
           variants:product_variants(*),
           packages:product_packages(*),
           prices:product_prices(*)
-        `)
-        .eq('id', id)
-        .single();
+        `);
+
+      if (isUuid) {
+        query = query.eq('id', cleanLookup);
+      } else {
+        query = query.ilike('internal_code', cleanLookup);
+      }
+
+      let { data, error } = await query.maybeSingle();
+
+      // Si non trouvé par code interne, tenter par ancienne référence
+      if (!data && !isUuid) {
+        const fallbackRes = await supabase
+          .from('products')
+          .select(`
+            *,
+            category:categories(*),
+            images:product_images(*),
+            variants:product_variants(*),
+            packages:product_packages(*),
+            prices:product_prices(*)
+          `)
+          .ilike('legacy_reference', cleanLookup)
+          .maybeSingle();
+        if (fallbackRes.data) {
+          data = fallbackRes.data;
+        }
+      }
 
       if (error || !data) return null;
       product = {
@@ -215,7 +243,13 @@ export const catalogService = {
       const products = getLocalProducts();
       const categories = getLocalCategories();
       const catMap = new Map(categories.map(c => [c.id, c]));
-      const found = products.find(p => p.id === id);
+      const lower = cleanLookup.toLowerCase();
+      const found = products.find(p => 
+        p.id === cleanLookup || 
+        p.id.toLowerCase() === lower || 
+        p.internal_code?.toLowerCase() === lower ||
+        p.legacy_reference?.toLowerCase() === lower
+      );
       if (!found) return null;
       product = {
         ...found,

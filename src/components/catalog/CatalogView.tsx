@@ -1,19 +1,16 @@
 import React, { useState, useMemo } from 'react';
 import { Product, Category, ProductStatus } from '../../types';
-import { formatPriceFCFA } from '../../lib/constants';
+import { formatPriceFCFA, getProductShareUrl } from '../../lib/constants';
 import { 
   LayoutGrid, 
   List, 
-  Filter, 
-  Tag, 
   Image as ImageIcon, 
   AlertTriangle, 
-  CheckCircle2, 
   Archive, 
   Plus, 
-  Sparkles, 
   ChevronRight,
-  ArrowUpDown
+  Share2,
+  Check
 } from 'lucide-react';
 
 interface CatalogViewProps {
@@ -49,6 +46,30 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
 }) => {
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [sortBy, setSortBy] = useState<'name' | 'code' | 'recent'>('recent');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const handleQuickShare = async (product: Product) => {
+    const shareUrl = getProductShareUrl(product);
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${product.internal_code} — ${product.name}`,
+          text: `Catalogue GMI : ${product.name} (${product.internal_code})`,
+          url: shareUrl,
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setToastMessage(`Lien copié : ${product.internal_code}`);
+      setTimeout(() => setToastMessage(null), 2500);
+    } catch (err) {
+      console.error('Erreur copie presse-papier:', err);
+    }
+  };
 
   // Filtrage et Tri
   const sortedProducts = useMemo(() => {
@@ -303,7 +324,20 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       {formatPriceFCFA(detailPrice)}
                     </span>
                   </div>
-                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 group-hover:translate-x-0.5 transition-all" />
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleQuickShare(product);
+                      }}
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-white hover:shadow-xs border border-transparent hover:border-slate-200 transition-colors"
+                      title="Partager ou copier le lien direct de cet article"
+                    >
+                      <Share2 className="w-3.5 h-3.5" />
+                    </button>
+                    <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 group-hover:translate-x-0.5 transition-all" />
+                  </div>
                 </div>
               </div>
             );
@@ -365,16 +399,37 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 </div>
 
                 {/* Price and Action */}
-                <div className="text-right flex-shrink-0">
-                  <span className="text-[10px] text-slate-400 block uppercase font-medium">Prix détail</span>
-                  <span className="text-xs sm:text-sm font-bold text-slate-900">
-                    {formatPriceFCFA(detailPrice)}
-                  </span>
-                  <ChevronRight className="w-4 h-4 text-slate-400 ml-auto mt-1 group-hover:text-brand-600 transition-colors" />
+                <div className="text-right flex-shrink-0 flex items-center gap-2 sm:gap-3">
+                  <div>
+                    <span className="text-[10px] text-slate-400 block uppercase font-medium">Prix détail</span>
+                    <span className="text-xs sm:text-sm font-bold text-slate-900">
+                      {formatPriceFCFA(detailPrice)}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleQuickShare(product);
+                    }}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-brand-600 hover:bg-slate-100 transition-colors"
+                    title="Partager ou copier le lien direct"
+                  >
+                    <Share2 className="w-4 h-4" />
+                  </button>
+                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-brand-600 transition-colors" />
                 </div>
               </div>
             );
           })}
+        </div>
+      )}
+
+      {/* Toast confirmation de copie */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 bg-slate-900/95 text-white text-xs font-semibold py-2.5 px-4 rounded-xl shadow-xl border border-slate-700 flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2 backdrop-blur-sm">
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
         </div>
       )}
 

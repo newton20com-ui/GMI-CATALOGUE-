@@ -16,6 +16,17 @@ export const LoginView: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
+  const [pendingProduct, setPendingProduct] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const target = params.get('product') || params.get('p') || sessionStorage.getItem('gmi_target_product');
+    if (target) {
+      setPendingProduct(target);
+      sessionStorage.setItem('gmi_target_product', target);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +119,21 @@ export const LoginView: React.FC = () => {
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md px-4 sm:px-0">
         <div className="bg-white py-8 px-6 sm:px-10 shadow-modal rounded-2xl border border-slate-100">
           
+          {/* Pending Product Deep Link Banner */}
+          {pendingProduct && (
+            <div className="mb-5 bg-sky-50 border border-sky-200 rounded-xl p-3 flex items-start gap-2.5 text-xs text-sky-900 shadow-xs">
+              <Sparkles className="w-4 h-4 text-brand-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-slate-800">
+                  Lien direct vers l'article <span className="font-mono text-brand-600 bg-white px-1.5 py-0.5 rounded border border-sky-200">{pendingProduct}</span>
+                </p>
+                <p className="text-slate-600 text-[11px] mt-0.5">
+                  Connectez-vous pour ouvrir automatiquement sa fiche complète.
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Tabs or Title */}
           {mode === 'forgot' ? (
             <div className="mb-6 text-center border-b border-slate-100 pb-4">

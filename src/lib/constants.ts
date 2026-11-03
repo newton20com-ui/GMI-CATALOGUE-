@@ -253,3 +253,14 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<'staff' | 'admin', PermissionKey[]
   ]
 };
 
+// Générer l'URL officielle de partage direct pour un article
+export function getProductShareUrl(product: { id: string; internal_code?: string }): string {
+  const origin = typeof window !== 'undefined' && window.location.origin
+    ? window.location.origin
+    : PRODUCTION_SITE_URL.replace(/\/$/, '');
+  const path = typeof window !== 'undefined' && window.location.pathname ? window.location.pathname : '/';
+  const param = product.internal_code || product.id;
+  return `${origin}${path}?product=${encodeURIComponent(param)}`;
+}
+
+

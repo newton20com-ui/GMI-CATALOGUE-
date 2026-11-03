@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Product, ProductImage, PermissionKey, ImageViewType, UserProfile } from '../../types';
-import { formatPriceFCFA, formatDateFr, IMAGE_VIEW_TYPES, INITIAL_PRICE_TYPES } from '../../lib/constants';
+import { formatPriceFCFA, formatDateFr, IMAGE_VIEW_TYPES, INITIAL_PRICE_TYPES, getProductShareUrl } from '../../lib/constants';
 import { 
   X, 
   Tag, 
@@ -21,7 +21,12 @@ import {
   ShieldAlert,
   ChevronLeft,
   ChevronRight,
-  Upload
+  Upload,
+  Share2,
+  Copy,
+  Check,
+  Link2,
+  MessageCircle
 } from 'lucide-react';
 import { catalogService } from '../../services/catalogService';
 
@@ -50,6 +55,35 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   const [isProcessing, setIsProcessing] = useState(false);
   const [actionError, setActionError] = useState('');
   const [actionSuccess, setActionSuccess] = useState('');
+  const [copied, setCopied] = useState(false);
+
+  const shareUrl = getProductShareUrl(product);
+
+  const handleCopyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(shareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch (err) {
+      console.error('Erreur copie presse-papier:', err);
+    }
+  };
+
+  const handleShareProduct = async () => {
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      try {
+        await navigator.share({
+          title: `${product.internal_code} — ${product.name}`,
+          text: `Catalogue GMI : ${product.name} (${product.internal_code})`,
+          url: shareUrl,
+        });
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+      }
+    }
+    handleCopyUrl();
+  };
 
   // Permissions spécifiques
   const canEdit = hasPermission('product:edit');
@@ -181,6 +215,26 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleShareProduct}
+              className={`btn-secondary text-xs py-1.5 px-3 gap-1.5 transition-colors ${
+                copied ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : ''
+              }`}
+              title="Partager ou copier le lien direct de cet article"
+            >
+              {copied ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="font-semibold text-emerald-700">Lien copié !</span>
+                </>
+              ) : (
+                <>
+                  <Share2 className="w-3.5 h-3.5 text-brand-600" />
+                  <span className="hidden sm:inline">Partager</span>
+                </>
+              )}
+            </button>
+
             {canEdit && (
               <button
                 onClick={() => onEdit(product)}
@@ -469,6 +523,64 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   <p className="leading-relaxed">{product.precautions}</p>
                 </div>
               )}
+
+              {/* Lien direct & Partage PWA */}
+              <div className="bg-slate-50 border border-slate-200/90 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Link2 className="w-4 h-4 text-brand-600" />
+                    <span className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Lien direct de cet article
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full font-medium">
+                    Compatible PWA Mobile
+                  </span>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Ce lien unique ouvre directement la fiche de cet article. S'il est ouvert sur un téléphone où le <strong>Catalogue GMI</strong> est déjà installé, il s'ouvrira directement dans l'application.
+                </p>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <input
+                    type="text"
+                    readOnly
+                    value={shareUrl}
+                    className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-2 text-xs font-mono text-slate-700 select-all focus:outline-none focus:ring-1 focus:ring-brand-500"
+                    onClick={(e) => (e.target as HTMLInputElement).select()}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleCopyUrl}
+                      className={`btn-secondary flex-1 sm:flex-initial text-xs py-2 px-3 gap-1.5 whitespace-nowrap transition-colors ${
+                        copied ? 'bg-emerald-50 text-emerald-700 border-emerald-300' : ''
+                      }`}
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Copié !</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3.5 h-3.5 text-slate-600" />
+                          <span>Copier</span>
+                        </>
+                      )}
+                    </button>
+                    <a
+                      href={`https://api.whatsapp.com/send?text=${encodeURIComponent(`Catalogue GMI — ${product.name} (${product.internal_code}) :\n${shareUrl}`)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="btn-secondary flex-1 sm:flex-initial text-xs py-2 px-3 gap-1.5 whitespace-nowrap text-emerald-700 bg-emerald-50 hover:bg-emerald-100 border-emerald-200"
+                      title="Partager directement par WhatsApp"
+                    >
+                      <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>WhatsApp</span>
+                    </a>
+                  </div>
+                </div>
+              </div>
 
               {/* Mots clés & noms alternatifs */}
               {(product.alternative_names?.length > 0 || product.search_keywords?.length > 0) && (

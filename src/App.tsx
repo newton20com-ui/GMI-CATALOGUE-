@@ -34,6 +34,121 @@ const MainApplication: React.FC = () => {
   const [formModalOpen, setFormModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
 
+  // Synchronisation de l'URL avec le produit sélectionné
+  const handleSelectProduct = useCallback((product: Product | null) => {
+    setSelectedProduct(product);
+    if (typeof window === 'undefined') return;
+    const url = new URL(window.location.href);
+    if (product) {
+      const code = product.internal_code || product.id;
+      if (url.searchParams.get('product') !== code) {
+        url.searchParams.set('product', code);
+        url.searchParams.delete('p');
+        window.history.pushState({ productId: product.id, code }, '', url.toString());
+      }
+    } else {
+      if (url.searchParams.has('product') || url.searchParams.has('p')) {
+        url.searchParams.delete('product');
+        url.searchParams.delete('p');
+        const cleanUrl = url.pathname + (url.search ? url.search : '') + url.hash;
+        window.history.pushState({}, '', cleanUrl);
+      }
+    }
+  }, []);
+
+  // Ouvrir un produit par ID ou code interne (support Deep Linking)
+  const openProductByCodeOrId = useCallback(async (codeOrId: string) => {
+    if (!codeOrId) return;
+    const trimmed = codeOrId.trim();
+    // 1. Chercher dans les produits déjà en mémoire
+    const localMatch = products.find(p => 
+      p.id === trimmed || 
+      p.id.toLowerCase() === trimmed.toLowerCase() || 
+      p.internal_code?.toLowerCase() === trimmed.toLowerCase() ||
+      p.legacy_reference?.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (localMatch) {
+      handleSelectProduct(localMatch);
+      return;
+    }
+
+    // 2. Sinon, interroger le service (Supabase ou mock)
+    try {
+      const fetched = await catalogService.getProductById(trimmed, hasPermission, isSuperAdmin());
+      if (fetched) {
+        handleSelectProduct(fetched);
+      }
+    } catch (err) {
+      console.error('Erreur ouverture produit direct:', err);
+    }
+  }, [products, hasPermission, isSuperAdmin, handleSelectProduct]);
+
+  // Détection initiale des paramètres d'URL (?product=... ou ?p=...)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const deepProduct = params.get('product') || params.get('p');
+    if (deepProduct) {
+      sessionStorage.setItem('gmi_target_product', deepProduct);
+    }
+  }, []);
+
+  // Résolution automatique du lien direct une fois authentifié
+  useEffect(() => {
+    if (!currentUser) return;
+    const pendingTarget = sessionStorage.getItem('gmi_target_product');
+    if (pendingTarget) {
+      openProductByCodeOrId(pendingTarget);
+      sessionStorage.removeItem('gmi_target_product');
+    } else {
+      const params = new URLSearchParams(window.location.search);
+      const deepProduct = params.get('product') || params.get('p');
+      if (deepProduct && (!selectedProduct || (selectedProduct.id !== deepProduct && selectedProduct.internal_code !== deepProduct))) {
+        openProductByCodeOrId(deepProduct);
+      }
+    }
+  }, [currentUser, openProductByCodeOrId, selectedProduct]);
+
+  // Support natif PWA Launch Queue (ouverture de liens par l'application installée sur mobile/desktop)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if ('launchQueue' in window && typeof (window as any).launchQueue?.setConsumer === 'function') {
+      (window as any).launchQueue.setConsumer((launchParams: any) => {
+        if (!launchParams?.targetURL) return;
+        try {
+          const targetUrl = new URL(launchParams.targetURL);
+          const codeOrId = targetUrl.searchParams.get('product') || targetUrl.searchParams.get('p');
+          if (codeOrId) {
+            if (currentUser) {
+              openProductByCodeOrId(codeOrId);
+            } else {
+              sessionStorage.setItem('gmi_target_product', codeOrId);
+            }
+          }
+        } catch (err) {
+          console.error('Erreur launchQueue PWA:', err);
+        }
+      });
+    }
+  }, [currentUser, openProductByCodeOrId]);
+
+  // Gestion du bouton Précédent / Suivant du navigateur et gestes mobiles Android
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const prodParam = params.get('product') || params.get('p');
+      if (!prodParam) {
+        setSelectedProduct(null);
+      } else {
+        openProductByCodeOrId(prodParam);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [openProductByCodeOrId]);
+
   // Chargement des données
   const loadData = useCallback(async () => {
     if (!currentUser) return;
@@ -85,7 +200,7 @@ const MainApplication: React.FC = () => {
   };
 
   const handleOpenEditProduct = (product: Product) => {
-    setSelectedProduct(null);
+    handleSelectProduct(null);
     setProductToEdit(product);
     setFormModalOpen(true);
   };
@@ -94,7 +209,7 @@ const MainApplication: React.FC = () => {
     setFormModalOpen(false);
     setProductToEdit(null);
     loadData();
-    setSelectedProduct(savedProduct);
+    handleSelectProduct(savedProduct);
   };
 
   return (
@@ -125,7 +240,7 @@ const MainApplication: React.FC = () => {
             setSelectedCategory={setSelectedCategory}
             statusFilter={statusFilter}
             setStatusFilter={setStatusFilter}
-            onSelectProduct={(p) => setSelectedProduct(p)}
+            onSelectProduct={handleSelectProduct}
             onOpenNewProduct={handleOpenNewProduct}
             onOpenImport={() => setImportModalOpen(true)}
             canCreate={canCreate}
@@ -136,7 +251,7 @@ const MainApplication: React.FC = () => {
         {currentTab === 'admin' && (
           <AdminView
             currentUser={currentUser}
-            onSelectProduct={(p) => setSelectedProduct(p)}
+            onSelectProduct={handleSelectProduct}
           />
         )}
       </main>
@@ -145,7 +260,7 @@ const MainApplication: React.FC = () => {
       {selectedProduct && (
         <ProductDetailModal
           product={selectedProduct}
-          onClose={() => setSelectedProduct(null)}
+          onClose={() => handleSelectProduct(null)}
           onEdit={handleOpenEditProduct}
           onRefresh={async () => {
             loadData();
@@ -155,7 +270,7 @@ const MainApplication: React.FC = () => {
                 hasPermission,
                 isSuperAdmin()
               );
-              if (refreshed) setSelectedProduct(refreshed);
+              if (refreshed) handleSelectProduct(refreshed);
             }
           }}
           hasPermission={hasPermission}

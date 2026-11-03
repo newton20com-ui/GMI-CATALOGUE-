@@ -5,7 +5,12 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
   "orientation": "portrait-primary",
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
+  "handle_links": "preferred",
   "background_color": "#ffffff",
   "theme_color": "#0284c7",
   "lang": "fr",
