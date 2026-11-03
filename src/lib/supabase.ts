@@ -49,7 +49,6 @@ export async function ensureFreshSession(): Promise<boolean> {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
     if (sessionError || !session) {
-      console.warn('Aucune session active détectée:', sessionError);
       return false;
     }
 
@@ -62,14 +61,52 @@ export async function ensureFreshSession(): Promise<boolean> {
     if (expiresAtMs - nowMs < tenMinutesMs) {
       const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
       if (refreshError || !refreshData.session) {
-        console.warn('Échec du renouvellement automatique du jeton Supabase:', refreshError);
+        console.warn('Tentative de renouvellement du jeton Supabase:', refreshError?.message);
         return false;
       }
     }
 
     return true;
   } catch (err) {
-    console.warn('Erreur inattendue lors de la vérification de session:', err);
+    console.warn('Erreur lors de la vérification de session:', err);
     return false;
   }
+}
+
+/**
+ * Exécute une opération Supabase avec garantie de jeton frais.
+ * En cas d'erreur "JWT expired", renouvelle immédiatement la session et réessaie automatiquement.
+ */
+export async function executeWithFreshSession<T>(operation: () => Promise<T>): Promise<T> {
+  await ensureFreshSession();
+  try {
+    return await operation();
+  } catch (err: any) {
+    const isJwtExpired = 
+      err?.message?.toLowerCase().includes('jwt expired') ||
+      err?.message?.toLowerCase().includes('invalid claim') ||
+      err?.code === 'PGRST301' ||
+      err?.status === 401;
+
+    if (isJwtExpired) {
+      console.warn('JWT expiré détecté. Renouvellement transparent de la session en cours...');
+      const refreshed = await supabase.auth.refreshSession();
+      if (refreshed.data?.session) {
+        // Réessayer l'opération une seconde fois avec le nouveau jeton
+        return await operation();
+      }
+    }
+    throw err;
+  }
+}
+
+// Renouvellement automatique du jeton dès la sortie de veille ou le retour sur l'application (PWA ou Onglet)
+if (typeof window !== 'undefined') {
+  const handleWakeUp = () => {
+    if (document.visibilityState === 'visible') {
+      ensureFreshSession().catch(() => {});
+    }
+  };
+  document.addEventListener('visibilitychange', handleWakeUp);
+  window.addEventListener('focus', handleWakeUp);
 }

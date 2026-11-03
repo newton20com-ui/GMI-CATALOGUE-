@@ -534,7 +534,8 @@ export const catalogService = {
     updates: Partial<Product>,
     prices?: Record<string, number>,
     userId?: string,
-    newImages?: Array<{ file?: File; dataUrl?: string; url?: string; filename?: string; view_type?: any; caption?: string }>
+    newImages?: Array<{ file?: File; dataUrl?: string; url?: string; filename?: string; view_type?: any; caption?: string }>,
+    packages?: Array<{ package_type: string; package_label: string; units_per_package: number }>
   ): Promise<Product> {
     if (isSupabaseConfigured) {
       await ensureFreshSession();
@@ -543,16 +544,16 @@ export const catalogService = {
         .update({
           name: updates.name,
           category_id: updates.category_id,
-          brand: updates.brand,
-          model_reference: updates.model_reference,
-          legacy_reference: updates.legacy_reference,
-          alternative_names: updates.alternative_names,
-          search_keywords: updates.search_keywords,
-          short_description: updates.short_description,
-          detailed_presentation: updates.detailed_presentation,
-          product_usage: updates.product_usage,
-          technical_specs: updates.technical_specs,
-          precautions: updates.precautions,
+          brand: updates.brand !== undefined ? updates.brand : null,
+          model_reference: updates.model_reference !== undefined ? updates.model_reference : null,
+          legacy_reference: updates.legacy_reference !== undefined ? updates.legacy_reference : null,
+          alternative_names: updates.alternative_names || [],
+          search_keywords: updates.search_keywords || [],
+          short_description: updates.short_description !== undefined ? updates.short_description : null,
+          detailed_presentation: updates.detailed_presentation !== undefined ? updates.detailed_presentation : null,
+          product_usage: updates.product_usage !== undefined ? updates.product_usage : null,
+          technical_specs: updates.technical_specs !== undefined ? updates.technical_specs : null,
+          precautions: updates.precautions !== undefined ? updates.precautions : null,
           status: updates.status,
           updated_at: new Date().toISOString(),
           updated_by: userId,
@@ -563,19 +564,65 @@ export const catalogService = {
 
       if (error) throw error;
 
-      // Mettre à jour les prix
+      // Mettre à jour les prix avec vérification d'existence pour éviter l'erreur 42P10 ON CONFLICT
       if (prices) {
         for (const [code, amount] of Object.entries(prices)) {
-          if (amount !== undefined && amount !== null && !isNaN(amount)) {
-            await supabase.from('product_prices').upsert({
-              product_id: id,
-              price_type_code: code,
-              amount_xof: Number(amount),
-              updated_by: userId,
-              updated_at: new Date().toISOString(),
-            }, { onConflict: 'product_id,price_type_code' });
+          if (amount !== undefined && amount !== null && !isNaN(amount) && amount > 0) {
+            const { data: existingPrice } = await supabase
+              .from('product_prices')
+              .select('id')
+              .eq('product_id', id)
+              .eq('price_type_code', code)
+              .maybeSingle();
+
+            if (existingPrice) {
+              await supabase
+                .from('product_prices')
+                .update({
+                  amount_xof: Number(amount),
+                  updated_by: userId,
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', existingPrice.id);
+            } else {
+              await supabase
+                .from('product_prices')
+                .insert({
+                  product_id: id,
+                  price_type_code: code,
+                  amount_xof: Number(amount),
+                  updated_by: userId,
+                });
+            }
+          } else if (amount === 0 || amount === null) {
+            // Suppression si le montant a été effacé
+            await supabase
+              .from('product_prices')
+              .delete()
+              .eq('product_id', id)
+              .eq('price_type_code', code);
           }
         }
+      }
+
+      // Mettre à jour les conditionnements si fournis
+      if (packages && packages.length > 0) {
+        await supabase
+          .from('product_packages')
+          .delete()
+          .eq('product_id', id);
+
+        await supabase
+          .from('product_packages')
+          .insert(
+            packages.map((pkg, idx) => ({
+              product_id: id,
+              package_type: pkg.package_type,
+              package_label: pkg.package_label,
+              units_per_package: pkg.units_per_package,
+              is_base_unit: idx === 0,
+            }))
+          );
       }
 
       // Upload des nouvelles photos s'il y en a
@@ -613,28 +660,49 @@ export const catalogService = {
       if (prices) {
         for (const [code, amount] of Object.entries(prices)) {
           const prcIdx = updatedPrices.findIndex(p => p.price_type_code === code);
-          if (prcIdx >= 0) {
-            updatedPrices[prcIdx] = {
-              ...updatedPrices[prcIdx],
-              amount_xof: Number(amount),
-              updated_at: new Date().toISOString(),
-            };
-          } else {
-            updatedPrices.push({
-              id: `prc-${Date.now()}-${code}`,
-              product_id: id,
-              price_type_code: code,
-              amount_xof: Number(amount),
-              updated_at: new Date().toISOString(),
-            });
+          if (amount !== undefined && amount !== null && !isNaN(amount) && amount > 0) {
+            if (prcIdx >= 0) {
+              updatedPrices[prcIdx] = {
+                ...updatedPrices[prcIdx],
+                amount_xof: Number(amount),
+                updated_at: new Date().toISOString(),
+              };
+            } else {
+              updatedPrices.push({
+                id: `prc-${Date.now()}-${code}`,
+                product_id: id,
+                price_type_code: code,
+                amount_xof: Number(amount),
+                updated_at: new Date().toISOString(),
+              });
+            }
+          } else if (amount === 0 || amount === null) {
+            if (prcIdx >= 0) {
+              updatedPrices.splice(prcIdx, 1);
+            }
           }
         }
+      }
+
+      // Mettre à jour les packages en local
+      let updatedPackages = existing.packages || [];
+      if (packages && packages.length > 0) {
+        updatedPackages = packages.map((pkg, idx) => ({
+          id: `pkg-${Date.now()}-${idx}`,
+          product_id: id,
+          variant_id: existing.variants?.[0]?.id || '',
+          package_type: pkg.package_type,
+          package_label: pkg.package_label,
+          units_per_package: pkg.units_per_package,
+          is_base_unit: idx === 0,
+        }));
       }
 
       const updatedProduct: Product = {
         ...existing,
         ...updates,
         prices: updatedPrices,
+        packages: updatedPackages,
         updated_at: new Date().toISOString(),
         updated_by: userId,
       };

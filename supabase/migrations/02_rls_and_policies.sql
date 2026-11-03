@@ -60,17 +60,22 @@ CREATE OR REPLACE FUNCTION public.has_permission(p_permission_key TEXT)
 RETURNS BOOLEAN AS $$
 DECLARE
     v_has_perm BOOLEAN;
+    v_role VARCHAR(50);
 BEGIN
     IF auth.uid() IS NULL THEN
         RETURN FALSE;
     END IF;
 
-    -- Le super_admin a automatiquement toutes les permissions
-    IF public.is_super_admin() THEN
+    -- Le super_admin et l'admin ont automatiquement toutes les permissions
+    SELECT role INTO v_role
+    FROM public.user_profiles
+    WHERE id = auth.uid() AND is_active = true;
+
+    IF v_role IN ('super_admin', 'admin') THEN
         RETURN TRUE;
     END IF;
 
-    -- Vérifier dans la table des permissions
+    -- Vérifier dans la table des permissions pour les autres rôles
     SELECT EXISTS (
         SELECT 1
         FROM public.user_permissions p

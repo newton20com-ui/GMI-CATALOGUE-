@@ -14,7 +14,8 @@ import {
   Trash2, 
   UploadCloud,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Star
 } from 'lucide-react';
 import { catalogService } from '../../services/catalogService';
 
@@ -87,6 +88,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     caption?: string;
   }
   const [uploadedPhotos, setUploadedPhotos] = useState<FormPhotoItem[]>([]);
+  const [existingImages, setExistingImages] = useState(productToEdit?.images || []);
 
   // État de validation & doublons
   const [submitting, setSubmitting] = useState(false);
@@ -163,13 +165,18 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         .map(a => a.trim())
         .filter(Boolean);
 
-      // Conversion des prix en nombres
+      // Conversion des prix en nombres (ou 0 pour suppression)
       const formattedPrices: Record<string, number> = {};
       for (const [code, val] of Object.entries(prices)) {
-        if (val.trim() !== '') {
-          const num = parseFloat(val);
-          if (!isNaN(num) && num >= 0) {
-            formattedPrices[code] = num;
+        if (val !== undefined && val !== null) {
+          const trimmed = val.trim();
+          if (trimmed !== '') {
+            const num = parseFloat(trimmed);
+            if (!isNaN(num) && num >= 0) {
+              formattedPrices[code] = num;
+            }
+          } else if (isEditing) {
+            formattedPrices[code] = 0; // Signale la suppression du prix
           }
         }
       }
@@ -196,7 +203,8 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           },
           formattedPrices,
           userId,
-          uploadedPhotos
+          uploadedPhotos,
+          packages
         );
       } else {
         saved = await catalogService.createProduct({
@@ -586,22 +594,49 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             </h3>
 
             {/* Photos déjà enregistrées sur le produit */}
-            {isEditing && productToEdit?.images && productToEdit.images.length > 0 && (
+            {isEditing && existingImages.length > 0 && (
               <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
                 <span className="text-xs font-semibold text-slate-700 block mb-2">
-                  Photographies enregistrées sur cette marchandise ({productToEdit.images.length}) :
+                  Photographies enregistrées sur cette marchandise ({existingImages.length}) :
                 </span>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {productToEdit.images.map((img) => (
-                    <div key={img.id} className="relative rounded-lg border border-slate-200 overflow-hidden bg-white shadow-xs">
+                  {existingImages.map((img) => (
+                    <div key={img.id} className="relative rounded-lg border border-slate-200 overflow-hidden bg-white shadow-xs group">
                       <img src={img.public_url} alt="" className="w-full h-20 object-cover" />
                       <div className="p-1.5 text-[10px] bg-white border-t border-slate-100 flex items-center justify-between">
                         <span className="truncate text-slate-600 font-medium capitalize">
                           {IMAGE_VIEW_TYPES.find(vt => vt.value === img.view_type)?.label || img.view_type}
                         </span>
-                        {img.is_primary && (
-                          <span className="text-[9px] bg-brand-100 text-brand-800 font-bold px-1 rounded">Principale</span>
-                        )}
+                        <div className="flex items-center gap-1">
+                          {img.is_primary ? (
+                            <span className="text-[9px] bg-brand-100 text-brand-800 font-bold px-1 rounded">Principale</span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                await catalogService.setPrimaryImage(productToEdit!.id, img.id);
+                                setExistingImages(prev => prev.map(i => ({ ...i, is_primary: i.id === img.id })));
+                              }}
+                              className="text-slate-400 hover:text-amber-500 p-0.5"
+                              title="Définir comme photo principale"
+                            >
+                              <Star className="w-3 h-3" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              if (window.confirm('Confirmer la suppression de cette photo ?')) {
+                                await catalogService.deleteImage(productToEdit!.id, img.id, img.storage_path);
+                                setExistingImages(prev => prev.filter(i => i.id !== img.id));
+                              }
+                            }}
+                            className="text-slate-400 hover:text-rose-600 p-0.5"
+                            title="Supprimer cette photo"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -613,7 +648,7 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               <UploadCloud className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <label className="cursor-pointer">
                 <span className="text-xs font-bold text-brand-600 hover:text-brand-700 underline">
-                  {isEditing && productToEdit?.images && productToEdit.images.length > 0 ? 'Ajouter d\'autres photographies' : 'Téléverser des photographies'}
+                  {isEditing && existingImages.length > 0 ? 'Ajouter d\'autres photographies' : 'Téléverser des photographies'}
                 </span>
                 <span className="text-xs text-slate-500"> depuis votre ordinateur ou smartphone</span>
                 <input
