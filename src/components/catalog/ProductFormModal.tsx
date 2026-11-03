@@ -195,18 +195,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             alternative_names,
           },
           formattedPrices,
-          userId
+          userId,
+          uploadedPhotos
         );
-
-        // Upload des nouvelles photos s'il y en a
-        for (const photo of uploadedPhotos) {
-          await catalogService.addImage(productToEdit.id, photo.file, {
-            view_type: photo.view_type,
-            caption: photo.caption,
-            is_primary: photo.view_type === 'principale',
-          });
-        }
-
       } else {
         saved = await catalogService.createProduct({
           name: name.trim(),
@@ -229,7 +220,9 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
         });
       }
 
-      onSuccess(saved);
+      // Recharger systématiquement pour garantir toutes les métadonnées et photos
+      const fresh = await catalogService.getProductById(saved.id, () => true, true);
+      onSuccess(fresh || saved);
     } catch (err: any) {
       setErrorMsg(err.message || 'Erreur lors de l\'enregistrement de la marchandise.');
       setSubmitting(false);
@@ -592,11 +585,35 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
               5. Photographies de la marchandise
             </h3>
 
+            {/* Photos déjà enregistrées sur le produit */}
+            {isEditing && productToEdit?.images && productToEdit.images.length > 0 && (
+              <div className="mb-4 p-3 bg-slate-50 rounded-xl border border-slate-200">
+                <span className="text-xs font-semibold text-slate-700 block mb-2">
+                  Photographies enregistrées sur cette marchandise ({productToEdit.images.length}) :
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {productToEdit.images.map((img) => (
+                    <div key={img.id} className="relative rounded-lg border border-slate-200 overflow-hidden bg-white shadow-xs">
+                      <img src={img.public_url} alt="" className="w-full h-20 object-cover" />
+                      <div className="p-1.5 text-[10px] bg-white border-t border-slate-100 flex items-center justify-between">
+                        <span className="truncate text-slate-600 font-medium capitalize">
+                          {IMAGE_VIEW_TYPES.find(vt => vt.value === img.view_type)?.label || img.view_type}
+                        </span>
+                        {img.is_primary && (
+                          <span className="text-[9px] bg-brand-100 text-brand-800 font-bold px-1 rounded">Principale</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-slate-50 transition-colors">
               <UploadCloud className="w-8 h-8 text-slate-400 mx-auto mb-2" />
               <label className="cursor-pointer">
                 <span className="text-xs font-bold text-brand-600 hover:text-brand-700 underline">
-                  Téléverser des photographies
+                  {isEditing && productToEdit?.images && productToEdit.images.length > 0 ? 'Ajouter d\'autres photographies' : 'Téléverser des photographies'}
                 </span>
                 <span className="text-xs text-slate-500"> depuis votre ordinateur ou smartphone</span>
                 <input

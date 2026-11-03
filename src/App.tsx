@@ -205,11 +205,17 @@ const MainApplication: React.FC = () => {
     setFormModalOpen(true);
   };
 
-  const handleProductSaved = (savedProduct: Product) => {
+  const handleProductSaved = async (savedProduct: Product) => {
     setFormModalOpen(false);
     setProductToEdit(null);
-    loadData();
-    handleSelectProduct(savedProduct);
+    await loadData();
+    // Toujours recharger le produit pour que la fiche détaillée affiche immédiatement toutes les photographies
+    const fresh = await catalogService.getProductById(
+      savedProduct.id,
+      hasPermission,
+      isSuperAdmin()
+    );
+    handleSelectProduct(fresh || savedProduct);
   };
 
   return (

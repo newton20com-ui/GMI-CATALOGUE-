@@ -529,7 +529,13 @@ export const catalogService = {
   },
 
   // Mettre à jour un produit
-  async updateProduct(id: string, updates: Partial<Product>, prices?: Record<string, number>, userId?: string): Promise<Product> {
+  async updateProduct(
+    id: string,
+    updates: Partial<Product>,
+    prices?: Record<string, number>,
+    userId?: string,
+    newImages?: Array<{ file?: File; dataUrl?: string; url?: string; filename?: string; view_type?: any; caption?: string }>
+  ): Promise<Product> {
     if (isSupabaseConfigured) {
       await ensureFreshSession();
       const { data, error } = await supabase
@@ -572,7 +578,29 @@ export const catalogService = {
         }
       }
 
-      return data;
+      // Upload des nouvelles photos s'il y en a
+      if (newImages && newImages.length > 0) {
+        for (const img of newImages) {
+          try {
+            await this.addImage(
+              id,
+              (img as any).file || (img as any).dataUrl || (img as any).url || img,
+              {
+                view_type: img.view_type || 'autre',
+                caption: img.caption || '',
+                is_primary: img.view_type === 'principale',
+              }
+            );
+          } catch (imgErr) {
+            console.error('Erreur téléversement image lors de la modification:', imgErr);
+            throw imgErr;
+          }
+        }
+      }
+
+      // Recharger le produit complet avec ses images, catégories et tarifs à jour
+      const completeProduct = await this.getProductById(id, () => true, true);
+      return completeProduct || data;
     } else {
       const products = getLocalProducts();
       const index = products.findIndex(p => p.id === id);
@@ -613,7 +641,24 @@ export const catalogService = {
 
       products[index] = updatedProduct;
       saveLocalProducts(products);
-      return updatedProduct;
+
+      // Upload des nouvelles photos en local
+      if (newImages && newImages.length > 0) {
+        for (const img of newImages) {
+          await this.addImage(
+            id,
+            (img as any).file || (img as any).dataUrl || (img as any).url || img,
+            {
+              view_type: img.view_type || 'autre',
+              caption: img.caption || '',
+              is_primary: img.view_type === 'principale',
+            }
+          );
+        }
+      }
+
+      const completeProduct = await this.getProductById(id, () => true, true);
+      return completeProduct || updatedProduct;
     }
   },
 
@@ -766,16 +811,30 @@ export const catalogService = {
 
       return { ...imgRow, public_url: publicUrl };
     } else {
-      // Local fallback
-      publicUrl = (file as any).dataUrl || (file as any).url || URL.createObjectURL(file as File);
+      // Local fallback : convertir le fichier en Data URL pour une persistance fiable dans localStorage
+      if (file instanceof File || file instanceof Blob) {
+        publicUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve((reader.result as string) || '');
+          reader.onerror = () => resolve('');
+          reader.readAsDataURL(file);
+        });
+      } else {
+        publicUrl = (file as any).dataUrl || (file as any).url || '';
+      }
+
+      const originalName = (file as any).name || (file as any).filename || (file instanceof File ? file.name : 'photo.jpg');
+      const mime = (file as any).type || (file instanceof File ? file.type : 'image/jpeg') || 'image/jpeg';
+      const sizeBytes = (file as any).size || (file instanceof File ? file.size : 250000);
+
       const newImg: ProductImage = {
         id: imageId,
         product_id: productId,
         storage_path: `products/${productId}/${imageId}`,
         public_url: publicUrl,
-        original_filename: (file as any).name || (file as any).filename || (file as File).name || 'photo.jpg',
-        mime_type: (file as any).type || 'image/jpeg',
-        file_size_bytes: (file as any).size || 250000,
+        original_filename: originalName,
+        mime_type: mime,
+        file_size_bytes: sizeBytes,
         view_type: metadata.view_type || 'autre',
         caption: metadata.caption || '',
         is_primary: metadata.is_primary || false,

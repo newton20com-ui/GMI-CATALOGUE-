@@ -219,8 +219,18 @@ USING (public.has_permission('catalog:view') OR public.is_super_admin());
 
 CREATE POLICY "Images modifiable by photo managers"
 ON public.product_images FOR ALL
-USING (public.has_permission('photo:manage') OR public.is_super_admin())
-WITH CHECK (public.has_permission('photo:manage') OR public.is_super_admin());
+USING (
+    public.has_permission('photo:manage') 
+    OR public.has_permission('product:edit')
+    OR public.has_permission('product:create')
+    OR public.is_super_admin()
+)
+WITH CHECK (
+    public.has_permission('photo:manage') 
+    OR public.has_permission('product:edit')
+    OR public.has_permission('product:create')
+    OR public.is_super_admin()
+);
 
 -- =============================================================================
 -- POLITIQUES RLS: PROFILS UTILISATEURS
