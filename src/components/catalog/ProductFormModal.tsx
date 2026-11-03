@@ -79,7 +79,14 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   });
 
   // Photos téléversées
-  const [uploadedPhotos, setUploadedPhotos] = useState<Array<{ url: string; filename: string; view_type: ImageViewType; caption?: string }>>([]);
+  interface FormPhotoItem {
+    file: File;
+    url: string;
+    filename: string;
+    view_type: ImageViewType;
+    caption?: string;
+  }
+  const [uploadedPhotos, setUploadedPhotos] = useState<FormPhotoItem[]>([]);
 
   // État de validation & doublons
   const [submitting, setSubmitting] = useState(false);
@@ -112,26 +119,22 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
-    if (!files) return;
+    if (!files || files.length === 0) return;
 
+    const newItems: FormPhotoItem[] = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          setUploadedPhotos(prev => [
-            ...prev,
-            {
-              url: event.target!.result as string,
-              filename: file.name,
-              view_type: prev.length === 0 ? 'principale' : 'autre',
-              caption: '',
-            }
-          ]);
-        }
-      };
-      reader.readAsDataURL(file);
+      const previewUrl = URL.createObjectURL(file);
+      newItems.push({
+        file,
+        url: previewUrl,
+        filename: file.name,
+        view_type: uploadedPhotos.length === 0 && i === 0 ? 'principale' : 'autre',
+        caption: '',
+      });
     }
+    setUploadedPhotos(prev => [...prev, ...newItems]);
+    e.target.value = '';
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -197,9 +200,10 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
         // Upload des nouvelles photos s'il y en a
         for (const photo of uploadedPhotos) {
-          await catalogService.addImage(productToEdit.id, { dataUrl: photo.url, name: photo.filename }, {
+          await catalogService.addImage(productToEdit.id, photo.file, {
             view_type: photo.view_type,
             caption: photo.caption,
+            is_primary: photo.view_type === 'principale',
           });
         }
 

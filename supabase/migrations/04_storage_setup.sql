@@ -1,25 +1,31 @@
 -- GMI-01 Migration 04: Configuration du Supabase Storage pour les photographies
 -- Bucket: product-images
 
--- Créer le bucket 'product-images' si non existant (public = false pour sécurité)
+-- Créer ou mettre à jour le bucket 'product-images' (public = true pour affichage CDN direct)
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES (
     'product-images',
     'product-images',
-    true, -- Visibilité des URLs publiques pour affichage rapide par les utilisateurs authentifiés de l'application
+    true, -- Permet le chargement direct via balises <img> et PWA mobile
     15728640, -- 15 Mo max par photo
-    ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/avif']
+    ARRAY['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'image/heic', 'image/avif']
 )
 ON CONFLICT (id) DO UPDATE
-SET file_size_limit = EXCLUDED.file_size_limit,
+SET public = true,
+    file_size_limit = EXCLUDED.file_size_limit,
     allowed_mime_types = EXCLUDED.allowed_mime_types;
 
 -- Politiques RLS pour Storage objects
-CREATE POLICY "Product photos viewable by authenticated users"
+-- 1. Lecture publique des photographies du catalogue (indispensable pour l'affichage CDN dans les balises <img>)
+DROP POLICY IF EXISTS "Product photos viewable by authenticated users" ON storage.objects;
+DROP POLICY IF EXISTS "Product photos viewable by anyone" ON storage.objects;
+CREATE POLICY "Product photos viewable by anyone"
 ON storage.objects FOR SELECT
-TO authenticated
+TO public
 USING (bucket_id = 'product-images');
 
+-- 2. Téléversement réservé aux gestionnaires de photos et administrateurs
+DROP POLICY IF EXISTS "Product photos uploadable by photo managers" ON storage.objects;
 CREATE POLICY "Product photos uploadable by photo managers"
 ON storage.objects FOR INSERT
 TO authenticated
@@ -28,6 +34,8 @@ WITH CHECK (
     (public.has_permission('photo:manage') OR public.is_super_admin())
 );
 
+-- 3. Suppression réservée aux gestionnaires de photos et administrateurs
+DROP POLICY IF EXISTS "Product photos deletable by photo managers" ON storage.objects;
 CREATE POLICY "Product photos deletable by photo managers"
 ON storage.objects FOR DELETE
 TO authenticated
@@ -36,6 +44,8 @@ USING (
     (public.has_permission('photo:manage') OR public.is_super_admin())
 );
 
+-- 4. Mise à jour réservée aux gestionnaires de photos et administrateurs
+DROP POLICY IF EXISTS "Product photos updatable by photo managers" ON storage.objects;
 CREATE POLICY "Product photos updatable by photo managers"
 ON storage.objects FOR UPDATE
 TO authenticated
@@ -43,3 +53,4 @@ USING (
     bucket_id = 'product-images' AND
     (public.has_permission('photo:manage') OR public.is_super_admin())
 );
+

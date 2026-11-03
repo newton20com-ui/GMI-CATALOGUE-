@@ -88,16 +88,48 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
   // Permissions spécifiques
   const canEdit = hasPermission('product:edit');
   const canArchive = hasPermission('product:archive');
-  const canManagePhotos = hasPermission('photo:manage');
+  const canManagePhotos = isSuperAdmin || hasPermission('photo:manage') || currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
 
   // Sécurité stricte : la suppression définitive est réservée EXCLUSIVEMENT aux administrateurs
   const canDelete = isSuperAdmin || (currentUser?.role === 'admin' && hasPermission('product:archive'));
+
+  const [uploadingPhotos, setUploadingPhotos] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const images = product.images && product.images.length > 0
     ? product.images
     : product.primary_image ? [product.primary_image] : [];
 
   const currentImage: ProductImage | undefined = images[activeImageIndex] || images[0];
+
+  const handleDirectPhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    setUploadingPhotos(true);
+    setActionError('');
+    setActionSuccess('');
+
+    let uploadedCount = 0;
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        await catalogService.addImage(product.id, file, {
+          view_type: images.length === 0 && i === 0 ? 'principale' : 'autre',
+          caption: '',
+          is_primary: images.length === 0 && i === 0,
+        });
+        uploadedCount++;
+      }
+      setActionSuccess(`${uploadedCount} photographie(s) téléversée(s) avec succès.`);
+      onRefresh();
+    } catch (err: any) {
+      setActionError(err.message || 'Erreur lors du téléversement.');
+    } finally {
+      setUploadingPhotos(false);
+      e.target.value = '';
+    }
+  };
 
   const handleSetPrimaryImage = async (imageId: string) => {
     if (!canManagePhotos) return;
@@ -392,50 +424,90 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                     )}
                   </>
                 ) : (
-                  <div className="text-center p-6 text-slate-400">
-                    <Camera className="w-12 h-12 mx-auto stroke-1 mb-2" />
-                    <p className="text-xs font-medium">Aucune photographie enregistrée</p>
+                  <div className="text-center p-6 text-slate-400 flex flex-col items-center justify-center">
+                    <Camera className="w-12 h-12 stroke-1 mb-2 text-slate-300" />
+                    <p className="text-xs font-semibold text-slate-700">Aucune photographie enregistrée</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5 max-w-xs">
+                      Téléversez des photos pour ce produit pour les afficher dans le catalogue et sur mobile.
+                    </p>
                     {canManagePhotos && (
-                      <p className="text-[11px] text-brand-600 mt-1">
-                        Utilisez le bouton "Modifier" pour téléverser des photos.
-                      </p>
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploadingPhotos}
+                        className="btn-primary text-xs py-2 px-4 gap-2 mt-3 shadow-xs"
+                      >
+                        {uploadingPhotos ? (
+                          <>
+                            <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>Téléversement...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-3.5 h-3.5" />
+                            <span>Téléverser des photos</span>
+                          </>
+                        )}
+                      </button>
                     )}
                   </div>
                 )}
               </div>
 
+              {/* Input de sélection de fichier caché */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/avif"
+                className="hidden"
+                onChange={handleDirectPhotoUpload}
+              />
+
               {/* Thumbnails strip (Desktop & Mobile) */}
-              {images.length > 1 && (
-                <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-y-auto md:w-32 max-h-72 pb-1 md:pb-0 scrollbar-thin">
-                  {images.map((img, idx) => (
-                    <button
-                      key={img.id}
-                      onClick={() => setActiveImageIndex(idx)}
-                      className={`relative w-16 h-16 sm:w-20 sm:h-20 md:w-full md:h-20 rounded-lg overflow-hidden border-2 flex-shrink-0 transition-all ${
-                        activeImageIndex === idx
-                          ? 'border-brand-600 ring-2 ring-brand-500/20 shadow-sm'
-                          : 'border-slate-200 hover:border-slate-300 opacity-75 hover:opacity-100'
-                      }`}
-                    >
-                      <img src={img.public_url} alt="" className="w-full h-full object-cover" />
-                      {img.is_primary && (
-                        <div className="absolute bottom-0 right-0 bg-amber-500 text-white p-0.5 rounded-tl">
-                          <Star className="w-2.5 h-2.5 fill-white" />
-                        </div>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
+              <div className="flex md:flex-col gap-2 overflow-x-auto md:overflow-y-auto md:w-32 max-h-72 pb-1 md:pb-0 scrollbar-thin">
+                {images.map((img, idx) => (
+                  <button
+                    key={img.id}
+                    onClick={() => setActiveImageIndex(idx)}
+                    className={`relative w-16 h-16 sm:w-20 sm:h-20 md:w-full md:h-20 rounded-lg overflow-hidden border-2 flex-shrink-0 transition-all ${
+                      activeImageIndex === idx
+                        ? 'border-brand-600 ring-2 ring-brand-500/20 shadow-sm'
+                        : 'border-slate-200 hover:border-slate-300 opacity-75 hover:opacity-100'
+                    }`}
+                  >
+                    <img src={img.public_url} alt="" className="w-full h-full object-cover" />
+                    {img.is_primary && (
+                      <div className="absolute bottom-0 right-0 bg-amber-500 text-white p-0.5 rounded-tl">
+                        <Star className="w-2.5 h-2.5 fill-white" />
+                      </div>
+                    )}
+                  </button>
+                ))}
+
+                {/* Bouton rapide d'ajout dans la bande miniature */}
+                {canManagePhotos && (
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingPhotos}
+                    className="w-16 h-16 sm:w-20 sm:h-20 md:w-full md:h-14 rounded-lg border-2 border-dashed border-slate-300 hover:border-brand-500 hover:bg-brand-50/50 flex flex-col items-center justify-center text-slate-400 hover:text-brand-600 transition-colors flex-shrink-0"
+                    title="Ajouter une photo supplémentaire"
+                  >
+                    <Upload className="w-4 h-4 mb-0.5" />
+                    <span className="text-[10px] font-semibold">Ajouter</span>
+                  </button>
+                )}
+              </div>
 
             </div>
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold">
+          <div className="flex border-b border-slate-200 gap-6 text-xs font-semibold overflow-x-auto scrollbar-none">
             <button
               onClick={() => setActiveTab('info')}
-              className={`pb-2.5 transition-colors flex items-center gap-1.5 ${
+              className={`pb-2.5 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'info'
                   ? 'border-b-2 border-brand-600 text-brand-600 font-bold'
                   : 'text-slate-500 hover:text-slate-800'
@@ -446,7 +518,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('variants')}
-              className={`pb-2.5 transition-colors flex items-center gap-1.5 ${
+              className={`pb-2.5 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'variants'
                   ? 'border-b-2 border-brand-600 text-brand-600 font-bold'
                   : 'text-slate-500 hover:text-slate-800'
@@ -457,7 +529,7 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             </button>
             <button
               onClick={() => setActiveTab('prices')}
-              className={`pb-2.5 transition-colors flex items-center gap-1.5 ${
+              className={`pb-2.5 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'prices'
                   ? 'border-b-2 border-brand-600 text-brand-600 font-bold'
                   : 'text-slate-500 hover:text-slate-800'
@@ -465,6 +537,17 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
             >
               <DollarSign className="w-4 h-4" />
               Grilles Tarifaires ({product.prices?.length || 0})
+            </button>
+            <button
+              onClick={() => setActiveTab('photos')}
+              className={`pb-2.5 transition-colors flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'photos'
+                  ? 'border-b-2 border-brand-600 text-brand-600 font-bold'
+                  : 'text-slate-500 hover:text-slate-800'
+              }`}
+            >
+              <Camera className="w-4 h-4" />
+              Photographies ({images.length})
             </button>
           </div>
 
@@ -733,6 +816,113 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                   Les prix de gros, revendeur et d'achat sont strictement protégés au niveau de la base de données (Row Level Security). Seuls les utilisateurs expressément autorisés peuvent les afficher ou les modifier.
                 </span>
               </div>
+
+            </div>
+          )}
+
+          {/* TAB 4: Galerie Photos et Gestion Visuelle */}
+          {activeTab === 'photos' && (
+            <div className="space-y-6">
+              
+              {/* Zone d'ajout de photos si autorisé */}
+              {canManagePhotos && (
+                <div className="bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:bg-slate-100/70 transition-colors">
+                  <Camera className="w-8 h-8 text-brand-600 mx-auto mb-2" />
+                  <p className="text-xs font-semibold text-slate-800">
+                    Ajouter de nouvelles photographies à cette marchandise
+                  </p>
+                  <p className="text-[11px] text-slate-500 mt-0.5 mb-3">
+                    Formats acceptés : JPG, PNG, WEBP, GIF, HEIC (Stockage sécurisé Supabase)
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={uploadingPhotos}
+                    className="btn-primary text-xs py-2 px-4 gap-2 shadow-xs"
+                  >
+                    {uploadingPhotos ? (
+                      <>
+                        <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                        <span>Téléversement en cours...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-3.5 h-3.5" />
+                        <span>Sélectionner des photos</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
+              {/* Galerie des photographies enregistrées */}
+              {images.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {images.map((img, idx) => (
+                    <div
+                      key={img.id || idx}
+                      className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs flex flex-col justify-between"
+                    >
+                      <div className="relative aspect-[4/3] bg-slate-100 overflow-hidden">
+                        <img
+                          src={img.public_url}
+                          alt={product.name}
+                          className="w-full h-full object-cover"
+                        />
+                        {img.is_primary && (
+                          <div className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
+                            <Star className="w-3 h-3 fill-white" />
+                            Principale
+                          </div>
+                        )}
+                        <div className="absolute bottom-2 left-2 bg-slate-900/80 text-white text-[10px] px-2 py-0.5 rounded backdrop-blur-sm">
+                          {getViewTypeLabel(img.view_type)}
+                        </div>
+                      </div>
+
+                      <div className="p-3 bg-white space-y-2">
+                        {img.caption && (
+                          <p className="text-xs text-slate-600 truncate">{img.caption}</p>
+                        )}
+                        {canManagePhotos && (
+                          <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-100">
+                            {!img.is_primary ? (
+                              <button
+                                type="button"
+                                onClick={() => handleSetPrimaryImage(img.id)}
+                                disabled={isProcessing}
+                                className="text-[11px] font-semibold text-brand-600 hover:text-brand-800 flex items-center gap-1"
+                              >
+                                <Star className="w-3 h-3" />
+                                Définir principale
+                              </button>
+                            ) : (
+                              <span className="text-[11px] text-amber-600 font-semibold flex items-center gap-1">
+                                <CheckCircle className="w-3 h-3" />
+                                Photo en avant
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteImage(img.id, img.storage_path)}
+                              disabled={isProcessing}
+                              className="text-slate-400 hover:text-rose-600 p-1 rounded hover:bg-rose-50"
+                              title="Supprimer cette photographie"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-slate-400">
+                  <Camera className="w-12 h-12 stroke-1 mx-auto mb-2 text-slate-300" />
+                  <p className="text-xs font-medium">Aucune photographie enregistrée pour cette marchandise.</p>
+                </div>
+              )}
 
             </div>
           )}

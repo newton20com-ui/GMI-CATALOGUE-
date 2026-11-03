@@ -85,6 +85,41 @@ export function generateInternalCode(categoryName: string, existingProducts: Pro
   return `GMI-${prefix}-${nextNum}`;
 }
 
+// Associer les URLs publiques Supabase Storage aux images
+export function attachPublicUrls(images: any[] = []): ProductImage[] {
+  return images.map(img => {
+    let publicUrl = img.public_url;
+    if (!publicUrl && img.storage_path && isSupabaseConfigured) {
+      const { data } = supabase.storage.from('product-images').getPublicUrl(img.storage_path);
+      publicUrl = data?.publicUrl;
+    }
+    return {
+      ...img,
+      public_url: publicUrl || img.storage_path,
+    };
+  }).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+}
+
+// Convertir un format DataURL base64 en Blob pour upload direct vers Supabase Storage
+export async function convertDataUrlToBlob(dataUrl: string): Promise<{ blob: Blob; mimeType: string }> {
+  try {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return { blob, mimeType: blob.type || 'image/jpeg' };
+  } catch {
+    const arr = dataUrl.split(',');
+    const mimeMatch = arr[0].match(/:(.*?);/);
+    const mimeType = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+    const bstr = atob(arr[1]);
+    let n = bstr.length;
+    const u8arr = new Uint8Array(n);
+    while (n--) {
+      u8arr[n] = bstr.charCodeAt(n);
+    }
+    return { blob: new Blob([u8arr], { type: mimeType }), mimeType };
+  }
+}
+
 export const catalogService = {
   // Récupérer les catégories
   async getCategories(): Promise<Category[]> {
@@ -133,10 +168,14 @@ export const catalogService = {
       const { data, error } = await query;
       if (error) throw error;
 
-      products = (data || []).map((p: any) => ({
-        ...p,
-        primary_image: p.images?.find((img: any) => img.is_primary) || p.images?.[0],
-      }));
+      products = (data || []).map((p: any) => {
+        const sortedImages = attachPublicUrls(p.images);
+        return {
+          ...p,
+          images: sortedImages,
+          primary_image: sortedImages.find((img: any) => img.is_primary) || sortedImages[0],
+        };
+      });
     } else {
       // Mode local
       products = getLocalProducts();
@@ -234,10 +273,11 @@ export const catalogService = {
       }
 
       if (error || !data) return null;
+      const sortedImages = attachPublicUrls(data.images);
       product = {
         ...data,
-        images: (data.images || []).sort((a: any, b: any) => a.order_index - b.order_index),
-        primary_image: data.images?.find((img: any) => img.is_primary) || data.images?.[0],
+        images: sortedImages,
+        primary_image: sortedImages.find((img: any) => img.is_primary) || sortedImages[0],
       };
     } else {
       const products = getLocalProducts();
@@ -457,7 +497,29 @@ export const catalogService = {
         );
       }
 
-      return insertedProduct;
+      // Téléverser les photos associées dans Supabase Storage & table product_images
+      if (data.images && data.images.length > 0) {
+        for (let i = 0; i < data.images.length; i++) {
+          const imgItem = data.images[i];
+          try {
+            await this.addImage(
+              pid,
+              (imgItem as any).file || (imgItem as any).dataUrl || (imgItem as any).url || imgItem,
+              {
+                view_type: imgItem.view_type || (i === 0 ? 'principale' : 'autre'),
+                caption: imgItem.caption || '',
+                is_primary: i === 0,
+              }
+            );
+          } catch (imgErr) {
+            console.error('Erreur téléversement image lors de la création du produit:', imgErr);
+          }
+        }
+      }
+
+      // Recharger le produit complet avec ses images et tarifs
+      const completeProduct = await this.getProductById(pid, () => true, true);
+      return completeProduct || insertedProduct;
     } else {
       // Stockage local
       const updatedList = [newProduct, ...getLocalProducts()];
@@ -603,22 +665,70 @@ export const catalogService = {
   // Téléverser une photographie
   async addImage(
     productId: string,
-    file: File | { dataUrl: string; name: string },
+    file: File | Blob | { dataUrl?: string; url?: string; name?: string; filename?: string; file?: File },
     metadata: { view_type: any; caption?: string; is_primary?: boolean }
   ): Promise<ProductImage> {
-    const imageId = `img-${Date.now()}`;
+    const imageId = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     let publicUrl = '';
 
-    if (isSupabaseConfigured && file instanceof File) {
+    if (isSupabaseConfigured) {
       await ensureFreshSession();
-      const ext = file.name.split('.').pop() || 'jpg';
-      const storagePath = `products/${productId}/${imageId}.${ext}`;
+
+      let uploadBody: File | Blob;
+      let filename = 'photo.jpg';
+      let mimeType = 'image/jpeg';
+      let fileSize = 350000;
+
+      if (file instanceof File) {
+        uploadBody = file;
+        filename = file.name;
+        mimeType = file.type || 'image/jpeg';
+        fileSize = file.size;
+      } else if (file instanceof Blob) {
+        uploadBody = file;
+        filename = `photo-${Date.now()}.jpg`;
+        mimeType = file.type || 'image/jpeg';
+        fileSize = file.size;
+      } else if (file && (file as any).file instanceof File) {
+        const rawFile = (file as any).file as File;
+        uploadBody = rawFile;
+        filename = rawFile.name;
+        mimeType = rawFile.type || 'image/jpeg';
+        fileSize = rawFile.size;
+      } else if (file && ((file as any).dataUrl || (file as any).url)) {
+        const sourceUrl = (file as any).dataUrl || (file as any).url;
+        const converted = await convertDataUrlToBlob(sourceUrl);
+        uploadBody = converted.blob;
+        filename = (file as any).name || (file as any).filename || `photo-${Date.now()}.jpg`;
+        mimeType = converted.mimeType;
+        fileSize = converted.blob.size;
+      } else {
+        throw new Error('Format de fichier image invalide pour le téléversement.');
+      }
+
+      // Normaliser le type MIME
+      if (!mimeType || mimeType === 'application/octet-stream') {
+        const ext = filename.split('.').pop()?.toLowerCase();
+        if (ext === 'png') mimeType = 'image/png';
+        else if (ext === 'webp') mimeType = 'image/webp';
+        else if (ext === 'gif') mimeType = 'image/gif';
+        else mimeType = 'image/jpeg';
+      }
+
+      const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const storagePath = `products/${productId}/${Date.now()}-${cleanFilename}`;
 
       const { error: uploadError } = await supabase.storage
         .from('product-images')
-        .upload(storagePath, file, { contentType: file.type });
+        .upload(storagePath, uploadBody, {
+          contentType: mimeType,
+          upsert: true,
+        });
 
-      if (uploadError) throw uploadError;
+      if (uploadError) {
+        console.error('Erreur Supabase Storage upload:', uploadError);
+        throw new Error(`Échec du téléversement vers le stockage Supabase : ${uploadError.message}`);
+      }
 
       const { data: urlData } = supabase.storage
         .from('product-images')
@@ -626,35 +736,47 @@ export const catalogService = {
 
       publicUrl = urlData.publicUrl;
 
+      // Si cette photo est définie comme principale, désactiver l'ancienne principale
+      if (metadata.is_primary) {
+        await supabase
+          .from('product_images')
+          .update({ is_primary: false })
+          .eq('product_id', productId);
+      }
+
       const { data: imgRow, error: rowError } = await supabase
         .from('product_images')
         .insert({
           product_id: productId,
           storage_path: storagePath,
-          original_filename: file.name,
-          mime_type: file.type,
-          file_size_bytes: file.size,
-          view_type: metadata.view_type,
-          caption: metadata.caption,
+          original_filename: filename,
+          mime_type: mimeType,
+          file_size_bytes: fileSize,
+          view_type: metadata.view_type || 'autre',
+          caption: metadata.caption || '',
           is_primary: metadata.is_primary || false,
         })
         .select()
         .single();
 
-      if (rowError) throw rowError;
+      if (rowError) {
+        console.error('Erreur insertion base product_images:', rowError);
+        throw new Error(`Image stockée mais enregistrement en base échoué : ${rowError.message}`);
+      }
+
       return { ...imgRow, public_url: publicUrl };
     } else {
       // Local fallback
-      publicUrl = (file as any).dataUrl || URL.createObjectURL(file as File);
+      publicUrl = (file as any).dataUrl || (file as any).url || URL.createObjectURL(file as File);
       const newImg: ProductImage = {
         id: imageId,
         product_id: productId,
         storage_path: `products/${productId}/${imageId}`,
         public_url: publicUrl,
-        original_filename: (file as any).name || (file as File).name,
+        original_filename: (file as any).name || (file as any).filename || (file as File).name || 'photo.jpg',
         mime_type: (file as any).type || 'image/jpeg',
         file_size_bytes: (file as any).size || 250000,
-        view_type: metadata.view_type,
+        view_type: metadata.view_type || 'autre',
         caption: metadata.caption || '',
         is_primary: metadata.is_primary || false,
         order_index: 99,
