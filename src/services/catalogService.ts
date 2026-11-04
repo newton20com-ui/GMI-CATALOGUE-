@@ -1,6 +1,6 @@
 import { Product, ProductStatus, ProductPrice, ProductImage, ProductVariant, ProductPackage, Category, PermissionKey } from '../types';
 import { INITIAL_PRODUCTS, MOCK_CATEGORIES } from '../lib/mockData';
-import { isSupabaseConfigured, supabase, ensureFreshSession } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, ensureFreshSession, executeWithFreshSession } from '../lib/supabase';
 import { optimizeImageFile, normalizeMimeType, fileToDataUrl } from '../lib/imageUtils';
 
 const PRODUCTS_STORAGE_KEY = 'gmi_catalog_products_v1';
@@ -134,12 +134,14 @@ export const catalogService = {
   // Récupérer les catégories
   async getCategories(): Promise<Category[]> {
     if (isSupabaseConfigured) {
-      const { data, error } = await supabase
-        .from('categories')
-        .select('*')
-        .order('display_order', { ascending: true });
-      if (error) throw error;
-      return data || [];
+      return await executeWithFreshSession(async () => {
+        const { data, error } = await supabase
+          .from('categories')
+          .select('*')
+          .order('display_order', { ascending: true });
+        if (error) throw error;
+        return data || [];
+      });
     }
     return getLocalCategories();
   },
@@ -155,28 +157,31 @@ export const catalogService = {
     let products: Product[] = [];
 
     if (isSupabaseConfigured) {
-      let query = supabase
-        .from('products')
-        .select(`
-          *,
-          category:categories(*),
-          images:product_images(*),
-          variants:product_variants(*),
-          packages:product_packages(*),
-          prices:product_prices(*)
-        `);
+      const data = await executeWithFreshSession(async () => {
+        let query = supabase
+          .from('products')
+          .select(`
+            *,
+            category:categories(*),
+            images:product_images(*),
+            variants:product_variants(*),
+            packages:product_packages(*),
+            prices:product_prices(*)
+          `);
 
-      if (params.categoryId && params.categoryId !== 'all') {
-        query = query.eq('category_id', params.categoryId);
-      }
-      if (params.status && params.status !== 'all') {
-        query = query.eq('status', params.status);
-      } else if (!params.status) {
-        query = query.neq('status', 'archive'); // Par défaut, exclure les archivés
-      }
+        if (params.categoryId && params.categoryId !== 'all') {
+          query = query.eq('category_id', params.categoryId);
+        }
+        if (params.status && params.status !== 'all') {
+          query = query.eq('status', params.status);
+        } else if (!params.status) {
+          query = query.neq('status', 'archive'); // Par défaut, exclure les archivés
+        }
 
-      const { data, error } = await query;
-      if (error) throw error;
+        const { data: qData, error } = await query;
+        if (error) throw error;
+        return qData;
+      });
 
       products = (data || []).map((p: any) => {
         const sortedImages = attachPublicUrls(p.images);
@@ -243,29 +248,9 @@ export const catalogService = {
     const cleanLookup = idOrCode.trim();
 
     if (isSupabaseConfigured) {
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanLookup);
-      let query = supabase
-        .from('products')
-        .select(`
-          *,
-          category:categories(*),
-          images:product_images(*),
-          variants:product_variants(*),
-          packages:product_packages(*),
-          prices:product_prices(*)
-        `);
-
-      if (isUuid) {
-        query = query.eq('id', cleanLookup);
-      } else {
-        query = query.ilike('internal_code', cleanLookup);
-      }
-
-      let { data, error } = await query.maybeSingle();
-
-      // Si non trouvé par code interne, tenter par ancienne référence
-      if (!data && !isUuid) {
-        const fallbackRes = await supabase
+      product = await executeWithFreshSession(async () => {
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanLookup);
+        let query = supabase
           .from('products')
           .select(`
             *,
@@ -274,21 +259,43 @@ export const catalogService = {
             variants:product_variants(*),
             packages:product_packages(*),
             prices:product_prices(*)
-          `)
-          .ilike('legacy_reference', cleanLookup)
-          .maybeSingle();
-        if (fallbackRes.data) {
-          data = fallbackRes.data;
-        }
-      }
+          `);
 
-      if (error || !data) return null;
-      const sortedImages = attachPublicUrls(data.images);
-      product = {
-        ...data,
-        images: sortedImages,
-        primary_image: sortedImages.find((img: any) => img.is_primary) || sortedImages[0],
-      };
+        if (isUuid) {
+          query = query.eq('id', cleanLookup);
+        } else {
+          query = query.ilike('internal_code', cleanLookup);
+        }
+
+        let { data, error } = await query.maybeSingle();
+
+        // Si non trouvé par code interne, tenter par ancienne référence
+        if (!data && !isUuid) {
+          const fallbackRes = await supabase
+            .from('products')
+            .select(`
+              *,
+              category:categories(*),
+              images:product_images(*),
+              variants:product_variants(*),
+              packages:product_packages(*),
+              prices:product_prices(*)
+            `)
+            .ilike('legacy_reference', cleanLookup)
+            .maybeSingle();
+          if (fallbackRes.data) {
+            data = fallbackRes.data;
+          }
+        }
+
+        if (error || !data) return null;
+        const sortedImages = attachPublicUrls(data.images);
+        return {
+          ...data,
+          images: sortedImages,
+          primary_image: sortedImages.find((img: any) => img.is_primary) || sortedImages[0],
+        };
+      });
     } else {
       const products = getLocalProducts();
       const categories = getLocalCategories();

@@ -38,6 +38,29 @@ export function createIsolatedAuthClient() {
 }
 
 /**
+ * Recherche et extrait le refresh_token Supabase stocké dans le localStorage
+ * quel que soit l'identifiant du projet Supabase.
+ */
+export function getStoredRefreshToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith('sb-') && key.endsWith('-auth-token')) {
+        const raw = localStorage.getItem(key);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed?.refresh_token) return parsed.refresh_token;
+        }
+      }
+    }
+  } catch {
+    //
+  }
+  return null;
+}
+
+/**
  * Vérifie et renouvelle proactivement le jeton d'authentification Supabase (JWT)
  * avant toute opération sensible (création/modification d'utilisateur, sauvegarde de produit, import CSV)
  * pour éliminer complètement l'erreur "JWT expired".
@@ -48,7 +71,21 @@ export async function ensureFreshSession(): Promise<boolean> {
   try {
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     
+    // Si aucune session n'est retournée directement par getSession()
     if (sessionError || !session) {
+      const storedRefreshToken = getStoredRefreshToken();
+      if (storedRefreshToken) {
+        try {
+          const { data: refreshed, error: refErr } = await supabase.auth.refreshSession({
+            refresh_token: storedRefreshToken,
+          });
+          if (!refErr && refreshed.session) {
+            return true;
+          }
+        } catch {
+          //
+        }
+      }
       return false;
     }
 
@@ -61,6 +98,16 @@ export async function ensureFreshSession(): Promise<boolean> {
     if (expiresAtMs - nowMs < tenMinutesMs) {
       const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
       if (refreshError || !refreshData.session) {
+        // En cas d'échec du rafraîchissement standard, tenter avec le refresh_token extrait
+        const storedRefreshToken = getStoredRefreshToken();
+        if (storedRefreshToken) {
+          const { data: forced, error: forcedErr } = await supabase.auth.refreshSession({
+            refresh_token: storedRefreshToken,
+          });
+          if (!forcedErr && forced.session) {
+            return true;
+          }
+        }
         console.warn('Tentative de renouvellement du jeton Supabase:', refreshError?.message);
         return false;
       }
@@ -75,25 +122,44 @@ export async function ensureFreshSession(): Promise<boolean> {
 
 /**
  * Exécute une opération Supabase avec garantie de jeton frais.
- * En cas d'erreur "JWT expired", renouvelle immédiatement la session et réessaie automatiquement.
+ * En cas d'erreur "JWT expired" ou 401, renouvelle immédiatement la session et réessaie automatiquement.
  */
 export async function executeWithFreshSession<T>(operation: () => Promise<T>): Promise<T> {
   await ensureFreshSession();
   try {
     return await operation();
   } catch (err: any) {
+    const errMsg = (err?.message || '').toLowerCase();
     const isJwtExpired = 
-      err?.message?.toLowerCase().includes('jwt expired') ||
-      err?.message?.toLowerCase().includes('invalid claim') ||
+      errMsg.includes('jwt expired') ||
+      errMsg.includes('invalid claim') ||
+      errMsg.includes('token is expired') ||
       err?.code === 'PGRST301' ||
-      err?.status === 401;
+      err?.status === 401 ||
+      err?.statusCode === '401';
 
     if (isJwtExpired) {
       console.warn('JWT expiré détecté. Renouvellement transparent de la session en cours...');
-      const refreshed = await supabase.auth.refreshSession();
-      if (refreshed.data?.session) {
-        // Réessayer l'opération une seconde fois avec le nouveau jeton
-        return await operation();
+      try {
+        let renewed = false;
+        const refreshed = await supabase.auth.refreshSession();
+        if (refreshed.data?.session) {
+          renewed = true;
+        } else {
+          const refreshToken = getStoredRefreshToken();
+          if (refreshToken) {
+            const forcedRef = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+            if (forcedRef.data?.session) {
+              renewed = true;
+            }
+          }
+        }
+        if (renewed) {
+          // Réessayer l'opération une seconde fois avec le nouveau jeton
+          return await operation();
+        }
+      } catch (refErr) {
+        console.warn('Échec du renouvellement lors du retry:', refErr);
       }
     }
     throw err;

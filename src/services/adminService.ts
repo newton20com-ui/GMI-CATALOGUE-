@@ -1,6 +1,6 @@
 import { UserProfile, UserRole, PermissionKey, Category } from '../types';
 import { MOCK_USERS, MOCK_CATEGORIES } from '../lib/mockData';
-import { isSupabaseConfigured, supabase, createIsolatedAuthClient, ensureFreshSession } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, createIsolatedAuthClient, ensureFreshSession, executeWithFreshSession } from '../lib/supabase';
 import { PRODUCTION_SITE_URL } from '../lib/constants';
 
 const USERS_STORAGE_KEY = 'gmi_catalog_users_v1';
@@ -44,20 +44,21 @@ export const adminService = {
   // Liste de tous les utilisateurs
   async getUsers(): Promise<UserProfile[]> {
     if (isSupabaseConfigured) {
-      await ensureFreshSession();
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select(`
-          *,
-          permissions:user_permissions(permission_key)
-        `)
-        .order('created_at', { ascending: true });
+      return await executeWithFreshSession(async () => {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select(`
+            *,
+            permissions:user_permissions(permission_key)
+          `)
+          .order('created_at', { ascending: true });
 
-      if (error) throw error;
-      return (data || []).map((u: any) => ({
-        ...u,
-        permissions: (u.permissions || []).map((p: any) => p.permission_key),
-      }));
+        if (error) throw error;
+        return (data || []).map((u: any) => ({
+          ...u,
+          permissions: (u.permissions || []).map((p: any) => p.permission_key),
+        }));
+      });
     }
     return getLocalUsers();
   },

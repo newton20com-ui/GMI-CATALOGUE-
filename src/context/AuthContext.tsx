@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile, PermissionKey } from '../types';
 import { MOCK_USERS } from '../lib/mockData';
-import { isSupabaseConfigured, supabase } from '../lib/supabase';
+import { isSupabaseConfigured, supabase, ensureFreshSession, executeWithFreshSession } from '../lib/supabase';
 import { PRODUCTION_SITE_URL } from '../lib/constants';
 
 interface AuthContextType {
@@ -23,9 +23,23 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const LOCAL_STORAGE_USER_KEY = 'gmi_catalog_current_user_id';
+const LOCAL_STORAGE_PROFILE_KEY = 'gmi_catalog_cached_user_profile';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  // Initialisation immédiate depuis le cache local pour éliminer tout clignotement ou déconnexion au Ctrl+R
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const cached = localStorage.getItem(LOCAL_STORAGE_PROFILE_KEY);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch {
+      // JSON corrompu ou invalide
+    }
+    return null;
+  });
+
   const [loading, setLoading] = useState(true);
   const isDemoMode = !isSupabaseConfigured;
   const [isInviteSession, setIsInviteSession] = useState<boolean>(() => {
@@ -49,48 +63,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     async function initAuth() {
       if (isSupabaseConfigured) {
         try {
+          // 1. Renouveler pro-activement le token si nécessaire AVANT d'exécuter des requêtes en base
+          await ensureFreshSession();
           const { data: { session } } = await supabase.auth.getSession();
+
           if (session?.user) {
-            const { data: profile } = await supabase
-              .from('user_profiles')
-              .select('*, user_permissions(permission_key)')
-              .eq('id', session.user.id)
-              .maybeSingle();
+            // 2. Récupérer le profil utilisateur avec protection contre les JWT expirés
+            const { data: profile, error: profileErr } = await executeWithFreshSession(async () => {
+              return await supabase
+                .from('user_profiles')
+                .select('*, user_permissions(permission_key)')
+                .eq('id', session.user.id)
+                .maybeSingle();
+            });
 
             if (profile && profile.is_active) {
               const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
-              setCurrentUser({
+              const userObj: UserProfile = {
                 ...profile,
                 permissions,
-              });
-            } else {
+              };
+              setCurrentUser(userObj);
+              localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(userObj));
+            } else if (profile && !profile.is_active) {
+              // Compte désactivé par l'administrateur
+              localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
+              await supabase.auth.signOut();
               setCurrentUser(null);
+            } else if (profileErr) {
+              console.warn('Erreur temporaire profil, conservation du profil en cache:', profileErr.message);
+              // Ne pas déconnecter si une version locale est déjà disponible
             }
           } else {
-            setCurrentUser(null);
+            // Aucune session ni refresh_token valide
+            const cached = localStorage.getItem(LOCAL_STORAGE_PROFILE_KEY);
+            if (!cached) {
+              setCurrentUser(null);
+            } else {
+              // Double vérification au cas où un refresh en tâche de fond est en cours
+              const refreshed = await ensureFreshSession();
+              if (!refreshed) {
+                localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
+                setCurrentUser(null);
+              }
+            }
           }
         } catch (err) {
           console.error('Erreur vérification session Supabase:', err);
-          setCurrentUser(null);
+          // Préserver le profil en cache s'il existe
+          const cached = localStorage.getItem(LOCAL_STORAGE_PROFILE_KEY);
+          if (!cached) {
+            setCurrentUser(null);
+          }
         }
 
         const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-          if (session?.user) {
-            const { data: profile } = await supabase
-              .from('user_profiles')
-              .select('*, user_permissions(permission_key)')
-              .eq('id', session.user.id)
-              .maybeSingle();
-
-            if (profile && profile.is_active) {
-              const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
-              setCurrentUser({
-                ...profile,
-                permissions,
-              });
-            }
-          } else if (event === 'SIGNED_OUT') {
+          if (event === 'SIGNED_OUT') {
+            localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
             setCurrentUser(null);
+          } else if (session?.user) {
+            try {
+              const { data: profile } = await supabase
+                .from('user_profiles')
+                .select('*, user_permissions(permission_key)')
+                .eq('id', session.user.id)
+                .maybeSingle();
+
+              if (profile && profile.is_active) {
+                const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
+                const userObj: UserProfile = {
+                  ...profile,
+                  permissions,
+                };
+                setCurrentUser(userObj);
+                localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(userObj));
+              }
+            } catch (e) {
+              console.warn('Erreur mise à jour profil via onAuthStateChange:', e);
+            }
           }
         });
 
@@ -138,10 +188,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
 
         const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
-        setCurrentUser({
+        const userObj: UserProfile = {
           ...profile,
           permissions,
-        });
+        };
+        setCurrentUser(userObj);
+        localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(userObj));
 
         return { success: true };
       } catch (err: any) {
@@ -192,10 +244,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (profile && profile.is_active) {
           const permissions = (profile.user_permissions || []).map((p: any) => p.permission_key);
-          setCurrentUser({
+          const userObj: UserProfile = {
             ...profile,
             permissions,
-          });
+          };
+          setCurrentUser(userObj);
+          localStorage.setItem(LOCAL_STORAGE_PROFILE_KEY, JSON.stringify(userObj));
           return { success: true, isFirstAdmin: profile.role === 'super_admin' };
         }
 
@@ -213,8 +267,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     if (isSupabaseConfigured) {
-      await supabase.auth.signOut();
+      try {
+        await supabase.auth.signOut();
+      } catch {
+        //
+      }
     }
+    localStorage.removeItem(LOCAL_STORAGE_PROFILE_KEY);
     localStorage.removeItem(LOCAL_STORAGE_USER_KEY);
     setCurrentUser(null);
   };
