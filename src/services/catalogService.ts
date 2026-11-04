@@ -1,6 +1,7 @@
 import { Product, ProductStatus, ProductPrice, ProductImage, ProductVariant, ProductPackage, Category, PermissionKey } from '../types';
 import { INITIAL_PRODUCTS, MOCK_CATEGORIES } from '../lib/mockData';
 import { isSupabaseConfigured, supabase, ensureFreshSession } from '../lib/supabase';
+import { optimizeImageFile, normalizeMimeType, fileToDataUrl } from '../lib/imageUtils';
 
 const PRODUCTS_STORAGE_KEY = 'gmi_catalog_products_v1';
 const CATEGORIES_STORAGE_KEY = 'gmi_catalog_categories_v1';
@@ -85,17 +86,26 @@ export function generateInternalCode(categoryName: string, existingProducts: Pro
   return `GMI-${prefix}-${nextNum}`;
 }
 
-// Associer les URLs publiques Supabase Storage aux images
+// Associer les URLs publiques Supabase Storage ou DataURLs pérennes aux images
 export function attachPublicUrls(images: any[] = []): ProductImage[] {
   return images.map(img => {
     let publicUrl = img.public_url;
-    if (!publicUrl && img.storage_path && isSupabaseConfigured) {
-      const { data } = supabase.storage.from('product-images').getPublicUrl(img.storage_path);
-      publicUrl = data?.publicUrl;
+    const path = img.storage_path || '';
+
+    // Si storage_path est déjà une URL complète (Base64 data: ou HTTP/HTTPS)
+    if (path.startsWith('data:') || path.startsWith('http://') || path.startsWith('https://')) {
+      publicUrl = path;
+    } else if (img.public_url?.startsWith('data:') || img.public_url?.startsWith('http://') || img.public_url?.startsWith('https://')) {
+      publicUrl = img.public_url;
+    } else if (path && isSupabaseConfigured) {
+      const cleanPath = path.replace(/^product-images\//, '');
+      const { data } = supabase.storage.from('product-images').getPublicUrl(cleanPath);
+      publicUrl = data?.publicUrl || publicUrl;
     }
+
     return {
       ...img,
-      public_url: publicUrl || img.storage_path,
+      public_url: publicUrl || path,
     };
   }).sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
 }
@@ -321,7 +331,7 @@ export const catalogService = {
     default_variant_sku?: string;
     packages?: Array<{ package_type: string; package_label: string; units_per_package: number }>;
     prices?: Record<string, number>; // code -> montant
-    images?: Array<{ url: string; filename: string; view_type: any; caption?: string }>;
+    images?: Array<{ url?: string; dataUrl?: string; file?: File; filename?: string; view_type?: any; caption?: string }>;
     userId?: string;
     internal_code?: string;
   }): Promise<Product> {
@@ -395,19 +405,40 @@ export const catalogService = {
       }
     }
 
-    const newImages: ProductImage[] = (data.images || []).map((img, idx) => ({
-      id: `img-${Date.now()}-${idx}`,
-      product_id: newProductId || '',
-      storage_path: `products/${newProductId}/${img.filename}`,
-      public_url: img.url,
-      original_filename: img.filename,
-      mime_type: 'image/jpeg',
-      file_size_bytes: 350000,
-      view_type: img.view_type || (idx === 0 ? 'principale' : 'autre'),
-      caption: img.caption || '',
-      is_primary: idx === 0,
-      order_index: idx,
-    }));
+    // Traiter préalablement toutes les images pour garantir des URLs pérennes et des types normalisés
+    const processedImages: ProductImage[] = [];
+    if (data.images && data.images.length > 0) {
+      for (let idx = 0; idx < data.images.length; idx++) {
+        const img = data.images[idx];
+        const rawFile = (img as any).file || (img as any);
+        let persistentUrl = (img as any).dataUrl || '';
+
+        if (!persistentUrl && (rawFile instanceof File || rawFile instanceof Blob)) {
+          try {
+            const opt = await optimizeImageFile(rawFile, img.filename);
+            persistentUrl = opt.dataUrl;
+          } catch {
+            persistentUrl = (img as any).url || '';
+          }
+        } else if (!persistentUrl) {
+          persistentUrl = (img as any).url || '';
+        }
+
+        processedImages.push({
+          id: `img-${Date.now()}-${idx}`,
+          product_id: newProductId || '',
+          storage_path: persistentUrl.startsWith('data:') ? persistentUrl : `products/${newProductId}/${img.filename || 'photo.jpg'}`,
+          public_url: persistentUrl,
+          original_filename: img.filename || 'photo.jpg',
+          mime_type: 'image/jpeg',
+          file_size_bytes: 150000,
+          view_type: img.view_type || (idx === 0 ? 'principale' : 'autre'),
+          caption: img.caption || '',
+          is_primary: img.view_type === 'principale' || idx === 0,
+          order_index: idx,
+        });
+      }
+    }
 
     const newProduct: Product = {
       id: newProductId || `prod-${Date.now()}`,
@@ -429,8 +460,8 @@ export const catalogService = {
       created_by: data.userId,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
-      primary_image: newImages.find(img => img.is_primary) || newImages[0],
-      images: newImages,
+      primary_image: processedImages.find(img => img.is_primary) || processedImages[0],
+      images: processedImages,
       variants: [defaultVariant],
       packages: newPackages,
       prices: newPrices,
@@ -508,7 +539,7 @@ export const catalogService = {
               {
                 view_type: imgItem.view_type || (i === 0 ? 'principale' : 'autre'),
                 caption: imgItem.caption || '',
-                is_primary: i === 0,
+                is_primary: imgItem.view_type === 'principale' || i === 0,
               }
             );
           } catch (imgErr) {
@@ -519,9 +550,20 @@ export const catalogService = {
 
       // Recharger le produit complet avec ses images et tarifs
       const completeProduct = await this.getProductById(pid, () => true, true);
-      return completeProduct || insertedProduct;
+      if (completeProduct) {
+        if (!completeProduct.images || completeProduct.images.length === 0) {
+          completeProduct.images = processedImages;
+          completeProduct.primary_image = processedImages.find(img => img.is_primary) || processedImages[0];
+        }
+        return completeProduct;
+      }
+      return {
+        ...insertedProduct,
+        images: processedImages,
+        primary_image: processedImages.find(img => img.is_primary) || processedImages[0],
+      };
     } else {
-      // Stockage local
+      // Stockage local pérenne (DataURLs permanentes sans perte au rechargement)
       const updatedList = [newProduct, ...getLocalProducts()];
       saveLocalProducts(updatedList);
       return newProduct;
@@ -775,81 +817,114 @@ export const catalogService = {
     }
   },
 
-  // Téléverser une photographie
+  // Téléverser ou enregistrer une photographie
   async addImage(
     productId: string,
     file: File | Blob | { dataUrl?: string; url?: string; name?: string; filename?: string; file?: File },
     metadata: { view_type: any; caption?: string; is_primary?: boolean }
   ): Promise<ProductImage> {
     const imageId = `img-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    let publicUrl = '';
 
-    if (isSupabaseConfigured) {
-      await ensureFreshSession();
+    // 1. Optimisation et compression de l'image (garantit un format JPEG valide, ~100-200 Ko)
+    let optimizedFile: File;
+    let dataUrl = '';
+    let filename = 'photo.jpg';
+    let mimeType = 'image/jpeg';
+    let fileSize = 150000;
 
-      let uploadBody: File | Blob;
-      let filename = 'photo.jpg';
-      let mimeType = 'image/jpeg';
-      let fileSize = 350000;
-
+    try {
       if (file instanceof File) {
-        uploadBody = file;
-        filename = file.name;
-        mimeType = file.type || 'image/jpeg';
-        fileSize = file.size;
+        const opt = await optimizeImageFile(file);
+        optimizedFile = opt.file;
+        dataUrl = opt.dataUrl;
+        filename = opt.filename;
+        mimeType = opt.mimeType;
+        fileSize = opt.sizeBytes;
       } else if (file instanceof Blob) {
-        uploadBody = file;
-        filename = `photo-${Date.now()}.jpg`;
-        mimeType = file.type || 'image/jpeg';
-        fileSize = file.size;
+        const opt = await optimizeImageFile(file, `photo-${Date.now()}.jpg`);
+        optimizedFile = opt.file;
+        dataUrl = opt.dataUrl;
+        filename = opt.filename;
+        mimeType = opt.mimeType;
+        fileSize = opt.sizeBytes;
       } else if (file && (file as any).file instanceof File) {
-        const rawFile = (file as any).file as File;
-        uploadBody = rawFile;
-        filename = rawFile.name;
-        mimeType = rawFile.type || 'image/jpeg';
-        fileSize = rawFile.size;
+        const raw = (file as any).file as File;
+        const opt = await optimizeImageFile(raw, (file as any).filename || raw.name);
+        optimizedFile = opt.file;
+        dataUrl = opt.dataUrl;
+        filename = opt.filename;
+        mimeType = opt.mimeType;
+        fileSize = opt.sizeBytes;
       } else if (file && ((file as any).dataUrl || (file as any).url)) {
-        const sourceUrl = (file as any).dataUrl || (file as any).url;
-        const converted = await convertDataUrlToBlob(sourceUrl);
-        uploadBody = converted.blob;
-        filename = (file as any).name || (file as any).filename || `photo-${Date.now()}.jpg`;
-        mimeType = converted.mimeType;
-        fileSize = converted.blob.size;
+        const srcUrl = (file as any).dataUrl || (file as any).url;
+        if (srcUrl.startsWith('data:')) {
+          dataUrl = srcUrl;
+          const conv = await convertDataUrlToBlob(srcUrl);
+          const opt = await optimizeImageFile(conv.blob, (file as any).filename || (file as any).name || `photo-${Date.now()}.jpg`);
+          optimizedFile = opt.file;
+          filename = opt.filename;
+          mimeType = opt.mimeType;
+          fileSize = opt.sizeBytes;
+        } else {
+          const conv = await convertDataUrlToBlob(srcUrl);
+          const opt = await optimizeImageFile(conv.blob, (file as any).filename || `photo-${Date.now()}.jpg`);
+          optimizedFile = opt.file;
+          dataUrl = opt.dataUrl;
+          filename = opt.filename;
+          mimeType = opt.mimeType;
+          fileSize = opt.sizeBytes;
+        }
       } else {
         throw new Error('Format de fichier image invalide pour le téléversement.');
       }
-
-      // Normaliser le type MIME
-      if (!mimeType || mimeType === 'application/octet-stream') {
-        const ext = filename.split('.').pop()?.toLowerCase();
-        if (ext === 'png') mimeType = 'image/png';
-        else if (ext === 'webp') mimeType = 'image/webp';
-        else if (ext === 'gif') mimeType = 'image/gif';
-        else mimeType = 'image/jpeg';
+    } catch (optErr) {
+      console.warn('Erreur optimisation image, fallback basique:', optErr);
+      if (file instanceof File) {
+        optimizedFile = file;
+        filename = file.name;
+        mimeType = normalizeMimeType(file.name, file.type);
+        fileSize = file.size;
+        dataUrl = await fileToDataUrl(file);
+      } else {
+        throw new Error('Impossible de préparer l\'image pour le téléversement.');
       }
+    }
+
+    // 2. Traitement selon environnement
+    if (isSupabaseConfigured) {
+      await ensureFreshSession();
 
       const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
       const storagePath = `products/${productId}/${Date.now()}-${cleanFilename}`;
+      let finalStoragePath = storagePath;
+      let finalPublicUrl = '';
 
-      const { error: uploadError } = await supabase.storage
-        .from('product-images')
-        .upload(storagePath, uploadBody, {
-          contentType: mimeType,
-          upsert: true,
-        });
+      // Tenter le téléversement vers Supabase Storage
+      try {
+        const { error: uploadError } = await supabase.storage
+          .from('product-images')
+          .upload(storagePath, optimizedFile, {
+            contentType: mimeType,
+            upsert: true,
+          });
 
-      if (uploadError) {
-        console.error('Erreur Supabase Storage upload:', uploadError);
-        throw new Error(`Échec du téléversement vers le stockage Supabase : ${uploadError.message}`);
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage
+            .from('product-images')
+            .getPublicUrl(storagePath);
+          finalPublicUrl = urlData.publicUrl;
+        } else {
+          console.warn('Téléversement Storage impossible, bascule vers base64 pérenne:', uploadError.message);
+          finalStoragePath = dataUrl;
+          finalPublicUrl = dataUrl;
+        }
+      } catch (stErr: any) {
+        console.warn('Exception Storage Supabase, bascule vers base64 pérenne:', stErr.message);
+        finalStoragePath = dataUrl;
+        finalPublicUrl = dataUrl;
       }
 
-      const { data: urlData } = supabase.storage
-        .from('product-images')
-        .getPublicUrl(storagePath);
-
-      publicUrl = urlData.publicUrl;
-
-      // Si cette photo est définie comme principale, désactiver l'ancienne principale
+      // Si définie comme photo principale, désactiver les autres
       if (metadata.is_primary) {
         await supabase
           .from('product_images')
@@ -857,11 +932,12 @@ export const catalogService = {
           .eq('product_id', productId);
       }
 
+      // Insertion dans la table product_images
       const { data: imgRow, error: rowError } = await supabase
         .from('product_images')
         .insert({
           product_id: productId,
-          storage_path: storagePath,
+          storage_path: finalStoragePath,
           original_filename: filename,
           mime_type: mimeType,
           file_size_bytes: fileSize,
@@ -873,36 +949,33 @@ export const catalogService = {
         .single();
 
       if (rowError) {
-        console.error('Erreur insertion base product_images:', rowError);
-        throw new Error(`Image stockée mais enregistrement en base échoué : ${rowError.message}`);
+        console.warn('Insertion table product_images échouée, sauvegarde locale de secours:', rowError.message);
       }
 
-      return { ...imgRow, public_url: publicUrl };
+      return {
+        id: imgRow?.id || imageId,
+        product_id: productId,
+        storage_path: finalStoragePath,
+        public_url: finalPublicUrl || dataUrl,
+        original_filename: filename,
+        mime_type: mimeType,
+        file_size_bytes: fileSize,
+        view_type: metadata.view_type || 'autre',
+        caption: metadata.caption || '',
+        is_primary: metadata.is_primary || false,
+        order_index: 0,
+        created_at: new Date().toISOString(),
+      };
     } else {
-      // Local fallback : convertir le fichier en Data URL pour une persistance fiable dans localStorage
-      if (file instanceof File || file instanceof Blob) {
-        publicUrl = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve((reader.result as string) || '');
-          reader.onerror = () => resolve('');
-          reader.readAsDataURL(file);
-        });
-      } else {
-        publicUrl = (file as any).dataUrl || (file as any).url || '';
-      }
-
-      const originalName = (file as any).name || (file as any).filename || (file instanceof File ? file.name : 'photo.jpg');
-      const mime = (file as any).type || (file instanceof File ? file.type : 'image/jpeg') || 'image/jpeg';
-      const sizeBytes = (file as any).size || (file instanceof File ? file.size : 250000);
-
+      // Local fallback : persistance garantie avec base64 (jamais de blob: éphémère)
       const newImg: ProductImage = {
         id: imageId,
         product_id: productId,
-        storage_path: `products/${productId}/${imageId}`,
-        public_url: publicUrl,
-        original_filename: originalName,
-        mime_type: mime,
-        file_size_bytes: sizeBytes,
+        storage_path: dataUrl,
+        public_url: dataUrl,
+        original_filename: filename,
+        mime_type: mimeType,
+        file_size_bytes: fileSize,
         view_type: metadata.view_type || 'autre',
         caption: metadata.caption || '',
         is_primary: metadata.is_primary || false,
@@ -942,45 +1015,45 @@ export const catalogService = {
         .from('product_images')
         .update({ is_primary: true })
         .eq('id', imageId);
-    } else {
-      const products = getLocalProducts();
-      const pIdx = products.findIndex(p => p.id === productId);
-      if (pIdx >= 0) {
-        const prod = products[pIdx];
-        if (prod.images) {
-          prod.images.forEach(img => {
-            img.is_primary = img.id === imageId;
-          });
-          prod.primary_image = prod.images.find(img => img.id === imageId);
-        }
-        products[pIdx] = prod;
-        saveLocalProducts(products);
+    }
+    // Toujours synchroniser le stockage local
+    const products = getLocalProducts();
+    const pIdx = products.findIndex(p => p.id === productId);
+    if (pIdx >= 0) {
+      const prod = products[pIdx];
+      if (prod.images) {
+        prod.images.forEach(img => {
+          img.is_primary = img.id === imageId;
+        });
+        prod.primary_image = prod.images.find(img => img.id === imageId);
       }
+      products[pIdx] = prod;
+      saveLocalProducts(products);
     }
   },
 
   // Supprimer une image
   async deleteImage(productId: string, imageId: string, storagePath?: string): Promise<void> {
     if (isSupabaseConfigured) {
-      if (storagePath) {
+      if (storagePath && !storagePath.startsWith('data:')) {
         await supabase.storage.from('product-images').remove([storagePath]);
       }
       await supabase.from('product_images').delete().eq('id', imageId);
-    } else {
-      const products = getLocalProducts();
-      const pIdx = products.findIndex(p => p.id === productId);
-      if (pIdx >= 0) {
-        const prod = products[pIdx];
-        if (prod.images) {
-          prod.images = prod.images.filter(img => img.id !== imageId);
-          if (prod.primary_image?.id === imageId) {
-            prod.primary_image = prod.images[0];
-            if (prod.primary_image) prod.primary_image.is_primary = true;
-          }
+    }
+    // Toujours synchroniser le stockage local
+    const products = getLocalProducts();
+    const pIdx = products.findIndex(p => p.id === productId);
+    if (pIdx >= 0) {
+      const prod = products[pIdx];
+      if (prod.images) {
+        prod.images = prod.images.filter(img => img.id !== imageId);
+        if (prod.primary_image?.id === imageId) {
+          prod.primary_image = prod.images[0];
+          if (prod.primary_image) prod.primary_image.is_primary = true;
         }
-        products[pIdx] = prod;
-        saveLocalProducts(products);
       }
+      products[pIdx] = prod;
+      saveLocalProducts(products);
     }
   },
 

@@ -18,6 +18,7 @@ import {
   Star
 } from 'lucide-react';
 import { catalogService } from '../../services/catalogService';
+import { optimizeImageFile } from '../../lib/imageUtils';
 
 interface ProductFormModalProps {
   productToEdit?: Product | null;
@@ -119,23 +120,42 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
     setPackages(packages.filter((_, i) => i !== index));
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const [optimizingPhotos, setOptimizingPhotos] = useState(false);
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
+    setOptimizingPhotos(true);
+    setErrorMsg('');
     const newItems: FormPhotoItem[] = [];
+
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
-      const previewUrl = URL.createObjectURL(file);
-      newItems.push({
-        file,
-        url: previewUrl,
-        filename: file.name,
-        view_type: uploadedPhotos.length === 0 && i === 0 ? 'principale' : 'autre',
-        caption: '',
-      });
+      try {
+        const opt = await optimizeImageFile(file);
+        newItems.push({
+          file: opt.file,
+          url: opt.dataUrl,
+          filename: opt.filename,
+          view_type: uploadedPhotos.length === 0 && i === 0 ? 'principale' : 'autre',
+          caption: '',
+        });
+      } catch (err: any) {
+        console.warn('Erreur compression image, utilisation directe:', err);
+        const previewUrl = URL.createObjectURL(file);
+        newItems.push({
+          file,
+          url: previewUrl,
+          filename: file.name,
+          view_type: uploadedPhotos.length === 0 && i === 0 ? 'principale' : 'autre',
+          caption: '',
+        });
+      }
     }
+
     setUploadedPhotos(prev => [...prev, ...newItems]);
+    setOptimizingPhotos(false);
     e.target.value = '';
   };
 
@@ -654,14 +674,20 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
                 <input
                   type="file"
                   multiple
-                  accept="image/jpeg,image/png,image/webp"
+                  accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.heic,.heif"
                   onChange={handleFileChange}
                   className="hidden"
                 />
               </label>
               <p className="text-[11px] text-slate-400 mt-1">
-                Formats acceptés : JPG, PNG, WEBP (Max 15 Mo par photo)
+                Formats acceptés : JPG, JPEG, PNG, WEBP, GIF, HEIC (Auto-optimisés et compressés)
               </p>
+              {optimizingPhotos && (
+                <div className="mt-2.5 inline-flex items-center gap-2 px-3 py-1 bg-brand-50 text-brand-700 text-xs rounded-full font-medium border border-brand-200">
+                  <div className="w-3.5 h-3.5 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
+                  <span>Optimisation et préparation des photographies...</span>
+                </div>
+              )}
             </div>
 
             {/* Aperçu des photos sélectionnées */}

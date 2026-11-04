@@ -244,6 +244,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         alt={product.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          if (primaryImg.storage_path && primaryImg.storage_path.startsWith('data:') && target.src !== primaryImg.storage_path) {
+                            target.src = primaryImg.storage_path;
+                          }
+                        }}
                       />
                     ) : (
                       <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
@@ -365,6 +371,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         alt={product.name}
                         className="w-full h-full object-cover"
                         loading="lazy"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          if (primaryImg.storage_path && primaryImg.storage_path.startsWith('data:') && target.src !== primaryImg.storage_path) {
+                            target.src = primaryImg.storage_path;
+                          }
+                        }}
                       />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center text-slate-400">

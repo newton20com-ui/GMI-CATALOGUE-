@@ -314,6 +314,12 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                       src={currentImage.public_url}
                       alt={product.name}
                       className="w-full h-full object-contain"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        if (currentImage.storage_path && currentImage.storage_path.startsWith('data:') && target.src !== currentImage.storage_path) {
+                          target.src = currentImage.storage_path;
+                        }
+                      }}
                     />
                     
                     {/* View type tag & Caption */}
@@ -714,6 +720,12 @@ export const ProductDetailModal: React.FC<ProductDetailModalProps> = ({
                           src={img.public_url}
                           alt={product.name}
                           className="w-full h-full object-cover"
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            if (img.storage_path && img.storage_path.startsWith('data:') && target.src !== img.storage_path) {
+                              target.src = img.storage_path;
+                            }
+                          }}
                         />
                         {img.is_primary && (
                           <div className="absolute top-2 left-2 bg-amber-500 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow-sm flex items-center gap-1">
