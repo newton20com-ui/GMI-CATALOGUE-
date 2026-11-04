@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { catalogService } from '../../services/catalogService';
 import { optimizeImageFile } from '../../lib/imageUtils';
+import { ensureFreshSession, forceRefreshSession } from '../../lib/supabase';
 
 interface ProductFormModalProps {
   productToEdit?: Product | null;
@@ -28,6 +29,8 @@ interface ProductFormModalProps {
   userId?: string;
   canEditPrices: boolean;
 }
+
+const DRAFT_STORAGE_KEY = 'gmi_product_form_draft_new_v1';
 
 export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   productToEdit,
@@ -95,6 +98,118 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
   const [submitting, setSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [duplicateWarning, setDuplicateWarning] = useState<string | null>(null);
+  const [draftRestored, setDraftRestored] = useState(false);
+
+  // 1. Restaurer automatiquement le brouillon non enregistré au montage
+  useEffect(() => {
+    if (!isEditing && typeof window !== 'undefined') {
+      try {
+        const raw = localStorage.getItem(DRAFT_STORAGE_KEY);
+        if (raw) {
+          const draft = JSON.parse(raw);
+          if (draft && (draft.name || draft.shortDescription || draft.brand || Object.keys(draft.prices || {}).length > 0)) {
+            if (draft.name) setName(draft.name);
+            if (draft.categoryId) setCategoryId(draft.categoryId);
+            if (draft.brand) setBrand(draft.brand);
+            if (draft.modelReference) setModelReference(draft.modelReference);
+            if (draft.legacyReference) setLegacyReference(draft.legacyReference);
+            if (draft.status) setStatus(draft.status);
+            if (draft.shortDescription) setShortDescription(draft.shortDescription);
+            if (draft.detailedPresentation) setDetailedPresentation(draft.detailedPresentation);
+            if (draft.productUsage) setProductUsage(draft.productUsage);
+            if (draft.technicalSpecs) setTechnicalSpecs(draft.technicalSpecs);
+            if (draft.precautions) setPrecautions(draft.precautions);
+            if (draft.keywordsText) setKeywordsText(draft.keywordsText);
+            if (draft.altNamesText) setAltNamesText(draft.altNamesText);
+            if (draft.packages && draft.packages.length > 0) setPackages(draft.packages);
+            if (draft.prices) setPrices(draft.prices);
+            if (draft.uploadedPhotos && draft.uploadedPhotos.length > 0) {
+              setUploadedPhotos(draft.uploadedPhotos);
+            }
+            setDraftRestored(true);
+          }
+        }
+      } catch (e) {
+        console.warn('Erreur lors de la lecture du brouillon:', e);
+      }
+    }
+  }, [isEditing]);
+
+  // 2. Sauvegarde automatique continue du brouillon dans localStorage
+  useEffect(() => {
+    if (isEditing || typeof window === 'undefined') return;
+
+    if (name.trim() || brand.trim() || shortDescription.trim() || Object.values(prices).some(v => Boolean(v))) {
+      const draftPayload = {
+        name,
+        categoryId,
+        brand,
+        modelReference,
+        legacyReference,
+        status,
+        shortDescription,
+        detailedPresentation,
+        productUsage,
+        technicalSpecs,
+        precautions,
+        keywordsText,
+        altNamesText,
+        packages,
+        prices,
+        uploadedPhotos: uploadedPhotos.map(p => ({
+          url: p.url,
+          filename: p.filename,
+          view_type: p.view_type,
+          caption: p.caption,
+        })),
+        updatedAt: Date.now(),
+      };
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draftPayload));
+      } catch {
+        // En cas de quota dépassé
+      }
+    }
+  }, [
+    isEditing,
+    name,
+    categoryId,
+    brand,
+    modelReference,
+    legacyReference,
+    status,
+    shortDescription,
+    detailedPresentation,
+    productUsage,
+    technicalSpecs,
+    precautions,
+    keywordsText,
+    altNamesText,
+    packages,
+    prices,
+    uploadedPhotos,
+  ]);
+
+  const clearDraft = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(DRAFT_STORAGE_KEY);
+    }
+    setName('');
+    setBrand('');
+    setModelReference('');
+    setLegacyReference('');
+    setShortDescription('');
+    setDetailedPresentation('');
+    setProductUsage('');
+    setTechnicalSpecs('');
+    setPrecautions('');
+    setKeywordsText('');
+    setAltNamesText('');
+    setPrices({});
+    setUploadedPhotos([]);
+    setPackages([{ package_type: 'unite', package_label: 'Pièce unitaire', units_per_package: 1 }]);
+    setDraftRestored(false);
+  };
 
   // Vérification de doublons en temps réel
   useEffect(() => {
@@ -203,10 +318,35 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
 
       let saved: Product;
 
-      if (isEditing && productToEdit) {
-        saved = await catalogService.updateProduct(
-          productToEdit.id,
-          {
+      // 1. Toujours renouveler la session avant de lancer la création ou modification
+      await ensureFreshSession();
+
+      try {
+        if (isEditing && productToEdit) {
+          saved = await catalogService.updateProduct(
+            productToEdit.id,
+            {
+              name: name.trim(),
+              category_id: categoryId,
+              brand: brand.trim() || undefined,
+              model_reference: modelReference.trim() || undefined,
+              legacy_reference: legacyReference.trim() || undefined,
+              short_description: shortDescription.trim() || undefined,
+              detailed_presentation: detailedPresentation.trim() || undefined,
+              product_usage: productUsage.trim() || undefined,
+              technical_specs: technicalSpecs.trim() || undefined,
+              precautions: precautions.trim() || undefined,
+              status,
+              search_keywords,
+              alternative_names,
+            },
+            formattedPrices,
+            userId,
+            uploadedPhotos,
+            packages
+          );
+        } else {
+          saved = await catalogService.createProduct({
             name: name.trim(),
             category_id: categoryId,
             brand: brand.trim() || undefined,
@@ -220,39 +360,78 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
             status,
             search_keywords,
             alternative_names,
-          },
-          formattedPrices,
-          userId,
-          uploadedPhotos,
-          packages
-        );
-      } else {
-        saved = await catalogService.createProduct({
-          name: name.trim(),
-          category_id: categoryId,
-          brand: brand.trim() || undefined,
-          model_reference: modelReference.trim() || undefined,
-          legacy_reference: legacyReference.trim() || undefined,
-          short_description: shortDescription.trim() || undefined,
-          detailed_presentation: detailedPresentation.trim() || undefined,
-          product_usage: productUsage.trim() || undefined,
-          technical_specs: technicalSpecs.trim() || undefined,
-          precautions: precautions.trim() || undefined,
-          status,
-          search_keywords,
-          alternative_names,
-          packages,
-          prices: formattedPrices,
-          images: uploadedPhotos,
-          userId,
-        });
+            packages,
+            prices: formattedPrices,
+            images: uploadedPhotos,
+            userId,
+          });
+        }
+      } catch (submitErr: any) {
+        const msg = (submitErr?.message || '').toLowerCase();
+        // Si erreur d'expiration du token, tenter un second essai immédiat après rafraîchissement
+        if (msg.includes('jwt') || msg.includes('expired') || msg.includes('401') || submitErr?.code === 'PGRST301') {
+          console.warn('Jeton expiré détecté lors de la soumission, réessai immédiat après renouvellement forcé...');
+          await forceRefreshSession();
+          if (isEditing && productToEdit) {
+            saved = await catalogService.updateProduct(
+              productToEdit.id,
+              {
+                name: name.trim(),
+                category_id: categoryId,
+                brand: brand.trim() || undefined,
+                model_reference: modelReference.trim() || undefined,
+                legacy_reference: legacyReference.trim() || undefined,
+                short_description: shortDescription.trim() || undefined,
+                detailed_presentation: detailedPresentation.trim() || undefined,
+                product_usage: productUsage.trim() || undefined,
+                technical_specs: technicalSpecs.trim() || undefined,
+                precautions: precautions.trim() || undefined,
+                status,
+                search_keywords,
+                alternative_names,
+              },
+              formattedPrices,
+              userId,
+              uploadedPhotos,
+              packages
+            );
+          } else {
+            saved = await catalogService.createProduct({
+              name: name.trim(),
+              category_id: categoryId,
+              brand: brand.trim() || undefined,
+              model_reference: modelReference.trim() || undefined,
+              legacy_reference: legacyReference.trim() || undefined,
+              short_description: shortDescription.trim() || undefined,
+              detailed_presentation: detailedPresentation.trim() || undefined,
+              product_usage: productUsage.trim() || undefined,
+              technical_specs: technicalSpecs.trim() || undefined,
+              precautions: precautions.trim() || undefined,
+              status,
+              search_keywords,
+              alternative_names,
+              packages,
+              prices: formattedPrices,
+              images: uploadedPhotos,
+              userId,
+            });
+          }
+        } else {
+          throw submitErr;
+        }
+      }
+
+      // Nettoyer le brouillon après un enregistrement réussi
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(DRAFT_STORAGE_KEY);
       }
 
       // Recharger systématiquement pour garantir toutes les métadonnées et photos
       const fresh = await catalogService.getProductById(saved.id, () => true, true);
       onSuccess(fresh || saved);
     } catch (err: any) {
-      setErrorMsg(err.message || 'Erreur lors de l\'enregistrement de la marchandise.');
+      console.error('Erreur finale lors de l\'enregistrement:', err);
+      setErrorMsg(err.message || 'Erreur lors de l\'enregistrement. Vos saisies sont conservées dans le formulaire.');
       setSubmitting(false);
     }
   };
@@ -279,11 +458,39 @@ export const ProductFormModal: React.FC<ProductFormModalProps> = ({
           </button>
         </div>
 
+        {/* Brouillon restauré automatiquement */}
+        {draftRestored && (
+          <div className="mx-6 mt-4 p-3 bg-amber-50/90 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-900 animate-in fade-in">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              <span className="font-semibold">Brouillon restauré :</span>
+              <span>Vos données en cours de saisie ont été récupérées automatiquement.</span>
+            </div>
+            <button
+              type="button"
+              onClick={clearDraft}
+              className="text-amber-800 hover:text-amber-950 font-semibold underline ml-3 flex-shrink-0"
+            >
+              Recommencer à zéro
+            </button>
+          </div>
+        )}
+
         {/* Error and Warnings */}
         {errorMsg && (
-          <div className="mx-6 mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-lg text-rose-700 text-xs flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 text-rose-500 flex-shrink-0" />
-            <span>{errorMsg}</span>
+          <div className="mx-6 mt-4 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 flex-1">
+              <AlertCircle className="w-4 h-4 text-rose-500 flex-shrink-0" />
+              <span>{errorMsg}</span>
+            </div>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={submitting}
+              className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg font-semibold transition flex-shrink-0"
+            >
+              Réessayer d'enregistrer
+            </button>
           </div>
         )}
 

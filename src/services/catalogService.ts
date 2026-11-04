@@ -475,100 +475,101 @@ export const catalogService = {
     };
 
     if (isSupabaseConfigured) {
-      await ensureFreshSession();
-      // Insertion dans Supabase avec transaction ou cascade
-      const { data: insertedProduct, error: prodErr } = await supabase
-        .from('products')
-        .insert({
-          internal_code: internalCode,
-          legacy_reference: newProduct.legacy_reference,
-          name: newProduct.name,
-          category_id: newProduct.category_id,
-          brand: newProduct.brand,
-          model_reference: newProduct.model_reference,
-          alternative_names: newProduct.alternative_names,
-          search_keywords: newProduct.search_keywords,
-          short_description: newProduct.short_description,
-          detailed_presentation: newProduct.detailed_presentation,
-          product_usage: newProduct.product_usage,
-          technical_specs: newProduct.technical_specs,
-          precautions: newProduct.precautions,
-          status: newProduct.status,
-          created_by: data.userId,
-        })
-        .select()
-        .single();
+      return await executeWithFreshSession(async () => {
+        // Insertion dans Supabase avec transaction ou cascade
+        const { data: insertedProduct, error: prodErr } = await supabase
+          .from('products')
+          .insert({
+            internal_code: internalCode,
+            legacy_reference: newProduct.legacy_reference,
+            name: newProduct.name,
+            category_id: newProduct.category_id,
+            brand: newProduct.brand,
+            model_reference: newProduct.model_reference,
+            alternative_names: newProduct.alternative_names,
+            search_keywords: newProduct.search_keywords,
+            short_description: newProduct.short_description,
+            detailed_presentation: newProduct.detailed_presentation,
+            product_usage: newProduct.product_usage,
+            technical_specs: newProduct.technical_specs,
+            precautions: newProduct.precautions,
+            status: newProduct.status,
+            created_by: data.userId,
+          })
+          .select()
+          .single();
 
-      if (prodErr) throw prodErr;
-      const pid = insertedProduct.id;
+        if (prodErr) throw prodErr;
+        const pid = insertedProduct.id;
 
-      // Créer la variante par défaut
-      await supabase.from('product_variants').insert({
-        product_id: pid,
-        sku: defaultVariant.sku,
-        variant_name: defaultVariant.variant_name,
-        is_default: true,
-      });
+        // Créer la variante par défaut
+        await supabase.from('product_variants').insert({
+          product_id: pid,
+          sku: defaultVariant.sku,
+          variant_name: defaultVariant.variant_name,
+          is_default: true,
+        });
 
-      // Créer les packages
-      if (newPackages.length > 0) {
-        await supabase.from('product_packages').insert(
-          newPackages.map(pkg => ({
-            product_id: pid,
-            package_type: pkg.package_type,
-            package_label: pkg.package_label,
-            units_per_package: pkg.units_per_package,
-            is_base_unit: pkg.is_base_unit,
-          }))
-        );
-      }
+        // Créer les packages
+        if (newPackages.length > 0) {
+          await supabase.from('product_packages').insert(
+            newPackages.map(pkg => ({
+              product_id: pid,
+              package_type: pkg.package_type,
+              package_label: pkg.package_label,
+              units_per_package: pkg.units_per_package,
+              is_base_unit: pkg.is_base_unit,
+            }))
+          );
+        }
 
-      // Créer les prix
-      if (newPrices.length > 0) {
-        await supabase.from('product_prices').insert(
-          newPrices.map(prc => ({
-            product_id: pid,
-            price_type_code: prc.price_type_code,
-            amount_xof: prc.amount_xof,
-            updated_by: data.userId,
-          }))
-        );
-      }
+        // Créer les prix
+        if (newPrices.length > 0) {
+          await supabase.from('product_prices').insert(
+            newPrices.map(prc => ({
+              product_id: pid,
+              price_type_code: prc.price_type_code,
+              amount_xof: prc.amount_xof,
+              updated_by: data.userId,
+            }))
+          );
+        }
 
-      // Téléverser les photos associées dans Supabase Storage & table product_images
-      if (data.images && data.images.length > 0) {
-        for (let i = 0; i < data.images.length; i++) {
-          const imgItem = data.images[i];
-          try {
-            await this.addImage(
-              pid,
-              (imgItem as any).file || (imgItem as any).dataUrl || (imgItem as any).url || imgItem,
-              {
-                view_type: imgItem.view_type || (i === 0 ? 'principale' : 'autre'),
-                caption: imgItem.caption || '',
-                is_primary: imgItem.view_type === 'principale' || i === 0,
-              }
-            );
-          } catch (imgErr) {
-            console.error('Erreur téléversement image lors de la création du produit:', imgErr);
+        // Téléverser les photos associées dans Supabase Storage & table product_images
+        if (data.images && data.images.length > 0) {
+          for (let i = 0; i < data.images.length; i++) {
+            const imgItem = data.images[i];
+            try {
+              await this.addImage(
+                pid,
+                (imgItem as any).file || (imgItem as any).dataUrl || (imgItem as any).url || imgItem,
+                {
+                  view_type: imgItem.view_type || (i === 0 ? 'principale' : 'autre'),
+                  caption: imgItem.caption || '',
+                  is_primary: imgItem.view_type === 'principale' || i === 0,
+                }
+              );
+            } catch (imgErr) {
+              console.error('Erreur téléversement image lors de la création du produit:', imgErr);
+            }
           }
         }
-      }
 
-      // Recharger le produit complet avec ses images et tarifs
-      const completeProduct = await this.getProductById(pid, () => true, true);
-      if (completeProduct) {
-        if (!completeProduct.images || completeProduct.images.length === 0) {
-          completeProduct.images = processedImages;
-          completeProduct.primary_image = processedImages.find(img => img.is_primary) || processedImages[0];
+        // Recharger le produit complet avec ses images et tarifs
+        const completeProduct = await this.getProductById(pid, () => true, true);
+        if (completeProduct) {
+          if (!completeProduct.images || completeProduct.images.length === 0) {
+            completeProduct.images = processedImages;
+            completeProduct.primary_image = processedImages.find(img => img.is_primary) || processedImages[0];
+          }
+          return completeProduct;
         }
-        return completeProduct;
-      }
-      return {
-        ...insertedProduct,
-        images: processedImages,
-        primary_image: processedImages.find(img => img.is_primary) || processedImages[0],
-      };
+        return {
+          ...insertedProduct,
+          images: processedImages,
+          primary_image: processedImages.find(img => img.is_primary) || processedImages[0],
+        };
+      });
     } else {
       // Stockage local pérenne (DataURLs permanentes sans perte au rechargement)
       const updatedList = [newProduct, ...getLocalProducts()];
@@ -587,116 +588,117 @@ export const catalogService = {
     packages?: Array<{ package_type: string; package_label: string; units_per_package: number }>
   ): Promise<Product> {
     if (isSupabaseConfigured) {
-      await ensureFreshSession();
-      const { data, error } = await supabase
-        .from('products')
-        .update({
-          name: updates.name,
-          category_id: updates.category_id,
-          brand: updates.brand !== undefined ? updates.brand : null,
-          model_reference: updates.model_reference !== undefined ? updates.model_reference : null,
-          legacy_reference: updates.legacy_reference !== undefined ? updates.legacy_reference : null,
-          alternative_names: updates.alternative_names || [],
-          search_keywords: updates.search_keywords || [],
-          short_description: updates.short_description !== undefined ? updates.short_description : null,
-          detailed_presentation: updates.detailed_presentation !== undefined ? updates.detailed_presentation : null,
-          product_usage: updates.product_usage !== undefined ? updates.product_usage : null,
-          technical_specs: updates.technical_specs !== undefined ? updates.technical_specs : null,
-          precautions: updates.precautions !== undefined ? updates.precautions : null,
-          status: updates.status,
-          updated_at: new Date().toISOString(),
-          updated_by: userId,
-        })
-        .eq('id', id)
-        .select()
-        .single();
+      return await executeWithFreshSession(async () => {
+        const { data, error } = await supabase
+          .from('products')
+          .update({
+            name: updates.name,
+            category_id: updates.category_id,
+            brand: updates.brand !== undefined ? updates.brand : null,
+            model_reference: updates.model_reference !== undefined ? updates.model_reference : null,
+            legacy_reference: updates.legacy_reference !== undefined ? updates.legacy_reference : null,
+            alternative_names: updates.alternative_names || [],
+            search_keywords: updates.search_keywords || [],
+            short_description: updates.short_description !== undefined ? updates.short_description : null,
+            detailed_presentation: updates.detailed_presentation !== undefined ? updates.detailed_presentation : null,
+            product_usage: updates.product_usage !== undefined ? updates.product_usage : null,
+            technical_specs: updates.technical_specs !== undefined ? updates.technical_specs : null,
+            precautions: updates.precautions !== undefined ? updates.precautions : null,
+            status: updates.status,
+            updated_at: new Date().toISOString(),
+            updated_by: userId,
+          })
+          .eq('id', id)
+          .select()
+          .single();
 
-      if (error) throw error;
+        if (error) throw error;
 
-      // Mettre à jour les prix avec vérification d'existence pour éviter l'erreur 42P10 ON CONFLICT
-      if (prices) {
-        for (const [code, amount] of Object.entries(prices)) {
-          if (amount !== undefined && amount !== null && !isNaN(amount) && amount > 0) {
-            const { data: existingPrice } = await supabase
-              .from('product_prices')
-              .select('id')
-              .eq('product_id', id)
-              .eq('price_type_code', code)
-              .maybeSingle();
-
-            if (existingPrice) {
-              await supabase
+        // Mettre à jour les prix avec vérification d'existence pour éviter l'erreur 42P10 ON CONFLICT
+        if (prices) {
+          for (const [code, amount] of Object.entries(prices)) {
+            if (amount !== undefined && amount !== null && !isNaN(amount) && amount > 0) {
+              const { data: existingPrice } = await supabase
                 .from('product_prices')
-                .update({
-                  amount_xof: Number(amount),
-                  updated_by: userId,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', existingPrice.id);
-            } else {
-              await supabase
-                .from('product_prices')
-                .insert({
-                  product_id: id,
-                  price_type_code: code,
-                  amount_xof: Number(amount),
-                  updated_by: userId,
-                });
-            }
-          } else if (amount === 0 || amount === null) {
-            // Suppression si le montant a été effacé
-            await supabase
-              .from('product_prices')
-              .delete()
-              .eq('product_id', id)
-              .eq('price_type_code', code);
-          }
-        }
-      }
+                .select('id')
+                .eq('product_id', id)
+                .eq('price_type_code', code)
+                .maybeSingle();
 
-      // Mettre à jour les conditionnements si fournis
-      if (packages && packages.length > 0) {
-        await supabase
-          .from('product_packages')
-          .delete()
-          .eq('product_id', id);
-
-        await supabase
-          .from('product_packages')
-          .insert(
-            packages.map((pkg, idx) => ({
-              product_id: id,
-              package_type: pkg.package_type,
-              package_label: pkg.package_label,
-              units_per_package: pkg.units_per_package,
-              is_base_unit: idx === 0,
-            }))
-          );
-      }
-
-      // Upload des nouvelles photos s'il y en a
-      if (newImages && newImages.length > 0) {
-        for (const img of newImages) {
-          try {
-            await this.addImage(
-              id,
-              (img as any).file || (img as any).dataUrl || (img as any).url || img,
-              {
-                view_type: img.view_type || 'autre',
-                caption: img.caption || '',
-                is_primary: img.view_type === 'principale',
+              if (existingPrice) {
+                await supabase
+                  .from('product_prices')
+                  .update({
+                    amount_xof: Number(amount),
+                    updated_by: userId,
+                    updated_at: new Date().toISOString(),
+                  })
+                  .eq('id', existingPrice.id);
+              } else {
+                await supabase
+                  .from('product_prices')
+                  .insert({
+                    product_id: id,
+                    price_type_code: code,
+                    amount_xof: Number(amount),
+                    updated_by: userId,
+                  });
               }
-            );
-          } catch (imgErr) {
-            console.error('Erreur téléversement image lors de la modification:', imgErr);
-            throw imgErr;
+            } else if (amount === 0 || amount === null) {
+              // Suppression si le montant a été effacé
+              await supabase
+                .from('product_prices')
+                .delete()
+                .eq('product_id', id)
+                .eq('price_type_code', code);
+            }
           }
         }
-      }
 
-      // Recharger le produit complet avec ses images, catégories et tarifs à jour
-      const completeProduct = await this.getProductById(id, () => true, true);
-      return completeProduct || data;
+        // Mettre à jour les conditionnements si fournis
+        if (packages && packages.length > 0) {
+          await supabase
+            .from('product_packages')
+            .delete()
+            .eq('product_id', id);
+
+          await supabase
+            .from('product_packages')
+            .insert(
+              packages.map((pkg, idx) => ({
+                product_id: id,
+                package_type: pkg.package_type,
+                package_label: pkg.package_label,
+                units_per_package: pkg.units_per_package,
+                is_base_unit: idx === 0,
+              }))
+            );
+        }
+
+        // Upload des nouvelles photos s'il y en a
+        if (newImages && newImages.length > 0) {
+          for (const img of newImages) {
+            try {
+              await this.addImage(
+                id,
+                (img as any).file || (img as any).dataUrl || (img as any).url || img,
+                {
+                  view_type: img.view_type || 'autre',
+                  caption: img.caption || '',
+                  is_primary: img.view_type === 'principale',
+                }
+              );
+            } catch (imgErr) {
+              console.error('Erreur téléversement image lors de la modification:', imgErr);
+              throw imgErr;
+            }
+          }
+        }
+
+        // Recharger le produit complet avec ses images, catégories et tarifs à jour
+        const completeProduct = await this.getProductById(id, () => true, true);
+        return completeProduct || data;
+      });
     } else {
       const products = getLocalProducts();
       const index = products.findIndex(p => p.id === id);
@@ -899,80 +901,80 @@ export const catalogService = {
 
     // 2. Traitement selon environnement
     if (isSupabaseConfigured) {
-      await ensureFreshSession();
+      return await executeWithFreshSession(async () => {
+        const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const storagePath = `products/${productId}/${Date.now()}-${cleanFilename}`;
+        let finalStoragePath = storagePath;
+        let finalPublicUrl = '';
 
-      const cleanFilename = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-      const storagePath = `products/${productId}/${Date.now()}-${cleanFilename}`;
-      let finalStoragePath = storagePath;
-      let finalPublicUrl = '';
-
-      // Tenter le téléversement vers Supabase Storage
-      try {
-        const { error: uploadError } = await supabase.storage
-          .from('product-images')
-          .upload(storagePath, optimizedFile, {
-            contentType: mimeType,
-            upsert: true,
-          });
-
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage
+        // Tenter le téléversement vers Supabase Storage
+        try {
+          const { error: uploadError } = await supabase.storage
             .from('product-images')
-            .getPublicUrl(storagePath);
-          finalPublicUrl = urlData.publicUrl;
-        } else {
-          console.warn('Téléversement Storage impossible, bascule vers base64 pérenne:', uploadError.message);
+            .upload(storagePath, optimizedFile, {
+              contentType: mimeType,
+              upsert: true,
+            });
+
+          if (!uploadError) {
+            const { data: urlData } = supabase.storage
+              .from('product-images')
+              .getPublicUrl(storagePath);
+            finalPublicUrl = urlData.publicUrl;
+          } else {
+            console.warn('Téléversement Storage impossible, bascule vers base64 pérenne:', uploadError.message);
+            finalStoragePath = dataUrl;
+            finalPublicUrl = dataUrl;
+          }
+        } catch (stErr: any) {
+          console.warn('Exception Storage Supabase, bascule vers base64 pérenne:', stErr.message);
           finalStoragePath = dataUrl;
           finalPublicUrl = dataUrl;
         }
-      } catch (stErr: any) {
-        console.warn('Exception Storage Supabase, bascule vers base64 pérenne:', stErr.message);
-        finalStoragePath = dataUrl;
-        finalPublicUrl = dataUrl;
-      }
 
-      // Si définie comme photo principale, désactiver les autres
-      if (metadata.is_primary) {
-        await supabase
+        // Si définie comme photo principale, désactiver les autres
+        if (metadata.is_primary) {
+          await supabase
+            .from('product_images')
+            .update({ is_primary: false })
+            .eq('product_id', productId);
+        }
+
+        // Insertion dans la table product_images
+        const { data: imgRow, error: rowError } = await supabase
           .from('product_images')
-          .update({ is_primary: false })
-          .eq('product_id', productId);
-      }
+          .insert({
+            product_id: productId,
+            storage_path: finalStoragePath,
+            original_filename: filename,
+            mime_type: mimeType,
+            file_size_bytes: fileSize,
+            view_type: metadata.view_type || 'autre',
+            caption: metadata.caption || '',
+            is_primary: metadata.is_primary || false,
+          })
+          .select()
+          .single();
 
-      // Insertion dans la table product_images
-      const { data: imgRow, error: rowError } = await supabase
-        .from('product_images')
-        .insert({
+        if (rowError) {
+          console.warn('Insertion table product_images échouée, sauvegarde locale de secours:', rowError.message);
+        }
+
+        return {
+          id: imgRow?.id || imageId,
           product_id: productId,
           storage_path: finalStoragePath,
+          public_url: finalPublicUrl || dataUrl,
           original_filename: filename,
           mime_type: mimeType,
           file_size_bytes: fileSize,
           view_type: metadata.view_type || 'autre',
           caption: metadata.caption || '',
           is_primary: metadata.is_primary || false,
-        })
-        .select()
-        .single();
-
-      if (rowError) {
-        console.warn('Insertion table product_images échouée, sauvegarde locale de secours:', rowError.message);
-      }
-
-      return {
-        id: imgRow?.id || imageId,
-        product_id: productId,
-        storage_path: finalStoragePath,
-        public_url: finalPublicUrl || dataUrl,
-        original_filename: filename,
-        mime_type: mimeType,
-        file_size_bytes: fileSize,
-        view_type: metadata.view_type || 'autre',
-        caption: metadata.caption || '',
-        is_primary: metadata.is_primary || false,
-        order_index: 0,
-        created_at: new Date().toISOString(),
-      };
+          order_index: 0,
+          created_at: new Date().toISOString(),
+        };
+      });
     } else {
       // Local fallback : persistance garantie avec base64 (jamais de blob: éphémère)
       const newImg: ProductImage = {

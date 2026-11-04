@@ -121,58 +121,103 @@ export async function ensureFreshSession(): Promise<boolean> {
 }
 
 /**
+ * Détecte si une erreur ou un message correspond à une expiration ou invalidation du jeton JWT Supabase
+ */
+export function isJwtError(err: any): boolean {
+  if (!err) return false;
+  const errMsg = (err.message || err.error_description || (typeof err === 'string' ? err : JSON.stringify(err))).toLowerCase();
+  return (
+    errMsg.includes('jwt expired') ||
+    errMsg.includes('invalid claim') ||
+    errMsg.includes('token is expired') ||
+    errMsg.includes('jwt') ||
+    err.code === 'PGRST301' ||
+    err.status === 401 ||
+    err.statusCode === '401'
+  );
+}
+
+/**
  * Exécute une opération Supabase avec garantie de jeton frais.
- * En cas d'erreur "JWT expired" ou 401, renouvelle immédiatement la session et réessaie automatiquement.
+ * En cas d'erreur "JWT expired" ou 401 (rejetée ou retournée dans l'objet résultat),
+ * renouvelle immédiatement la session en arrière-plan et réessaie automatiquement l'opération.
  */
 export async function executeWithFreshSession<T>(operation: () => Promise<T>): Promise<T> {
   await ensureFreshSession();
   try {
-    return await operation();
-  } catch (err: any) {
-    const errMsg = (err?.message || '').toLowerCase();
-    const isJwtExpired = 
-      errMsg.includes('jwt expired') ||
-      errMsg.includes('invalid claim') ||
-      errMsg.includes('token is expired') ||
-      err?.code === 'PGRST301' ||
-      err?.status === 401 ||
-      err?.statusCode === '401';
-
-    if (isJwtExpired) {
-      console.warn('JWT expiré détecté. Renouvellement transparent de la session en cours...');
-      try {
-        let renewed = false;
-        const refreshed = await supabase.auth.refreshSession();
-        if (refreshed.data?.session) {
-          renewed = true;
-        } else {
-          const refreshToken = getStoredRefreshToken();
-          if (refreshToken) {
-            const forcedRef = await supabase.auth.refreshSession({ refresh_token: refreshToken });
-            if (forcedRef.data?.session) {
-              renewed = true;
-            }
-          }
-        }
+    const result = await operation();
+    // Cas où le client PostgREST résout la promesse avec un objet { error } sans lever d'exception
+    if (result && typeof result === 'object' && 'error' in (result as any)) {
+      const resError = (result as any).error;
+      if (resError && isJwtError(resError)) {
+        console.warn('Erreur JWT détectée dans la réponse PostgREST, tentative de réessai...');
+        const renewed = await forceRefreshSession();
         if (renewed) {
-          // Réessayer l'opération une seconde fois avec le nouveau jeton
           return await operation();
         }
-      } catch (refErr) {
-        console.warn('Échec du renouvellement lors du retry:', refErr);
+      }
+    }
+    return result;
+  } catch (err: any) {
+    if (isJwtError(err)) {
+      console.warn('Exception JWT expirée interceptée. Renouvellement transparent de la session en cours...');
+      const renewed = await forceRefreshSession();
+      if (renewed) {
+        // Réessayer l'opération une seconde fois avec le nouveau jeton
+        return await operation();
       }
     }
     throw err;
   }
 }
 
-// Renouvellement automatique du jeton dès la sortie de veille ou le retour sur l'application (PWA ou Onglet)
+/**
+ * Force le renouvellement immédiat de la session Supabase
+ */
+export async function forceRefreshSession(): Promise<boolean> {
+  if (!isSupabaseConfigured) return true;
+  try {
+    const refreshed = await supabase.auth.refreshSession();
+    if (refreshed.data?.session) {
+      return true;
+    }
+    const refreshToken = getStoredRefreshToken();
+    if (refreshToken) {
+      const forcedRef = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+      if (forcedRef.data?.session) {
+        return true;
+      }
+    }
+  } catch (refErr) {
+    console.warn('Échec renouvellement forcé:', refErr);
+  }
+  return false;
+}
+
+// Battement de cœur permanent (Heartbeat) et réveil automatique
 if (typeof window !== 'undefined') {
-  const handleWakeUp = () => {
-    if (document.visibilityState === 'visible') {
+  // 1. Battement de cœur toutes les 2 minutes : maintient la session active et empêche l'expiration du JWT
+  setInterval(() => {
+    ensureFreshSession().catch(() => {});
+  }, 2 * 60 * 1000);
+
+  // 2. Détection d'interaction utilisateur (clic, frappe, tactile) avec limitation à une fois par minute
+  let lastActivityPing = 0;
+  const onUserActivity = () => {
+    const now = Date.now();
+    if (now - lastActivityPing > 60 * 1000) {
+      lastActivityPing = now;
       ensureFreshSession().catch(() => {});
     }
   };
-  document.addEventListener('visibilitychange', handleWakeUp);
-  window.addEventListener('focus', handleWakeUp);
+
+  window.addEventListener('click', onUserActivity, { passive: true });
+  window.addEventListener('keydown', onUserActivity, { passive: true });
+  window.addEventListener('touchstart', onUserActivity, { passive: true });
+  window.addEventListener('focus', onUserActivity);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      ensureFreshSession().catch(() => {});
+    }
+  });
 }
